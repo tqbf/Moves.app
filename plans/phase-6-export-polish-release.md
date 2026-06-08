@@ -39,6 +39,21 @@ alerts with database state"), §18 (must-have: export/import), §21
   `staple`, `verify-release`, `github-release`). Adapt entitlements as
   needed for hardened runtime; switch from ad-hoc/dev sign to Developer
   ID for `make dist`.
+- **Replace the SwiftPM `Bundle.module` runtime workaround (see
+  [`PROBLEMS.md`](../PROBLEMS.md)).** The current debug build creates a
+  symlink inside the .app at first launch so the SwiftPM-emitted
+  `Bundle.module` lookup (which targets the .app's bundle root rather
+  than `Contents/Resources/`) resolves to the real bundle. Hardened
+  runtime + notarized release builds re-verify bundle integrity at
+  every launch; the symlink trick won't survive. Replace before
+  `make dist` ships. Pick one:
+  1. Vendor `KeyboardShortcuts`'s `resource_bundle_accessor.swift` and
+     ship a patched copy that looks at `Contents/Resources/` directly.
+  2. Write a SwiftPM build-tool plugin that intercepts accessor
+     generation and emits the patched version.
+  3. Re-host KeyboardShortcuts's localized strings inside our target's
+     resources and stub `String.localized` so `Bundle.module` is never
+     touched.
 
 ## Decisions
 
@@ -67,6 +82,9 @@ alerts with database state"), §18 (must-have: export/import), §21
 - `make dist` from a clean checkout on a `vX.Y.Z` tag produces a
   notarized, stapled, zipped `Moves-X.Y.Z-macos.zip` that passes
   `spctl --assess`.
+- The Bundle.module workaround from `PROBLEMS.md` is replaced —
+  notarized builds launch the KeyboardShortcuts recorder on macOS 14
+  without runtime mutation of the .app.
 - Onboarding completes in <60s and ends with the user having captured
   one real item.
 - VoiceOver navigation reaches every primary action.

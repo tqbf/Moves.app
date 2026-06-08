@@ -2,6 +2,40 @@
 
 Newest first.
 
+## 2026-06-08 — SwiftPM `Bundle.module` macOS 14 crash (workaround landed)
+
+Reported crash on macOS 14 when the onboarding hotkey-recorder
+rendered. Three failed fixes before nailing the root cause; full
+write-up in [`PROBLEMS.md`](PROBLEMS.md).
+
+Short version: SwiftPM (Swift 6.3 / Xcode 26) emits a `Bundle.module`
+accessor that resolves to `Moves.app/<Name>.bundle` (the .app root, not
+`Contents/Resources/`). macOS codesign refuses to seal files at the
+.app root, and patching the SwiftPM-generated accessor at build time
+is pointless because SwiftPM regenerates it on every relink.
+
+Fix: `MovesApp.init()` runs before any view is constructed (and
+therefore before any `Bundle.module` access). It walks
+`Contents/Resources/` for `.bundle` directories and creates a relative
+symlink at the .app root pointing into Contents/Resources. The
+symlinks are created at runtime, so codesign's build-time seal stays
+valid, and `Bundle(path:)` follows them transparently. `build.sh` also
+rewrites the nested bundle's `Info.plist` with the minimum keys macOS
+14 requires (the SwiftPM-emitted plist contains only
+`CFBundleDevelopmentRegion`, which macOS 15 accepts and macOS 14
+rejects).
+
+Carries a follow-up flagged in PROBLEMS.md and the Phase 6 plan:
+hardened-runtime + notarized release builds will re-verify bundle
+integrity at every launch, so the runtime symlink trick won't survive
+`make dist`. Phase 6 now lists three replacement strategies (vendor
+the accessor, write a SwiftPM build plugin, or re-host the strings).
+
+Commits: `0737b92` (copy nested bundle into the .app), `56f0d2b`
+(codesign nested bundle innermost-first), `185afb2` (rewrite nested
+Info.plist for macOS 14), `50fe4eb` (the runtime symlink — the actual
+fix).
+
 ## 2026-06-08 — Phase 6: export + alert reconciliation + onboarding + notarization
 
 Phase 6 takes Moves from feature-complete to shippable. Backup/export
