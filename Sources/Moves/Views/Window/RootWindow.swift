@@ -38,7 +38,7 @@ struct RootWindow: View {
   private var sidebar: some View {
     List(selection: $selection) {
       Section {
-        sidebarRow(.available, "Available", icon: "figure.walk.motion", badge: store.availableThreads.count)
+        sidebarRow(.available, "Available", icon: "figure.walk.motion", badge: availableBadgeCount)
         sidebarRow(.current, "Current", icon: "play.circle", badge: store.current.threadId == nil ? 0 : 1)
         sidebarRow(.threadsList, "Threads", icon: "rectangle.stack", badge: store.threads.count)
         sidebarRow(.captured, "Captured", icon: "tray", badge: store.capturedItems.count)
@@ -50,6 +50,21 @@ struct RootWindow: View {
       }
     }
     .listStyle(.sidebar)
+  }
+
+  /// Same projection AvailableView renders, so the sidebar badge count
+  /// agrees with what the pane shows. Without this, a thread set to
+  /// `hide_during_work` inflated the sidebar badge but vanished from the
+  /// pane — user clicks "1" and sees "Nothing available."
+  private var availableBadgeCount: Int {
+    let filtered = WorkingHoursService.filter(
+      available: store.availableThreads,
+      isWorkTime: store.isWorkTime,
+      hasDeadline: { row in
+        (store.openItemsByThread[row.thread.id] ?? []).contains { $0.dueAt != nil }
+      }
+    )
+    return filtered.visible.count + filtered.deemphasized.count
   }
 
   @ViewBuilder

@@ -21,6 +21,12 @@ struct ThreadDetailView: View {
   // local buffers whenever the bound thread id changes.
   @State private var loadedThreadId: String?
 
+  // Debounced autosave for Markdown notes. The previous "Save notes"
+  // button got pushed off-screen by the editor expanding to fill its
+  // VStack, silently losing edits. Autosaving on a 600ms debounce
+  // matches the macOS-native Notes/Bear pattern and removes the cliff.
+  @State private var notesAutosave: Task<Void, Never>?
+
   /// Segments + open items, loaded async on appear and on thread switch.
   @State private var segments: [Segment] = []
   @State private var items: [Item] = []
@@ -173,19 +179,24 @@ struct ThreadDetailView: View {
 
   private var notesSection: some View {
     VStack(alignment: .leading, spacing: 6) {
-      Text("Notes")
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.tertiary)
-        .textCase(.uppercase)
-        .kerning(0.5)
+      HStack(spacing: 6) {
+        Text("Notes")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(.tertiary)
+          .textCase(.uppercase)
+          .kerning(0.5)
+        Spacer()
+        if notes != thread.detailMarkdown {
+          Text("Saving…")
+            .font(.system(size: 10))
+            .foregroundStyle(.tertiary)
+        }
+      }
       MarkdownEditorView(source: $notes, placeholder: "Markdown notes for this thread…")
         .frame(minHeight: 240)
-      HStack {
-        Spacer()
-        Button("Save notes", action: commitNotes)
-          .buttonStyle(.bordered)
-          .disabled(notes == thread.detailMarkdown)
-      }
+        .onChange(of: notes) { _, newValue in
+          scheduleNotesAutosave(newValue: newValue)
+        }
     }
   }
 
@@ -228,6 +239,19 @@ struct ThreadDetailView: View {
 
   private func commitNotes() {
     store.updateDetailMarkdown(thread, to: notes)
+  }
+
+  /// Debounced autosave for Markdown notes. Each keystroke (re)schedules a
+  /// commit 600ms in the future; if no further edit arrives, the commit
+  /// fires. Cancels prior pending commits.
+  private func scheduleNotesAutosave(newValue: String) {
+    notesAutosave?.cancel()
+    notesAutosave = Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 600_000_000)
+      guard !Task.isCancelled else { return }
+      guard newValue == notes else { return } // newer keystroke superseded.
+      store.updateDetailMarkdown(thread, to: newValue)
+    }
   }
 
   private func toggle(_ item: Item) async {

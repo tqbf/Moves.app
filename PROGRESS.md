@@ -2,6 +2,50 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 4 gate: Markdown autosave + Available badge filter
+
+End-to-end visual gate (walk all six panes, thread detail, captured
+processing, settings) caught two real bugs:
+
+- **"Save notes" button got pushed off-screen** by the Markdown editor's
+  expanding height inside the thread detail's vertical scroll layout. Easy
+  to type notes for several minutes and lose every word on tab-away.
+  Dropped the explicit Save button entirely; notes autosave on a 600ms
+  debounce via `.onChange(of: notes)` + cancelable Task, and a small
+  "Saving…" hint appears next to the section header when the local
+  buffer differs from `thread.detailMarkdown`. Matches Notes/Bear/iA
+  Writer idioms. Verified round-trip: type → kill app → relaunch → notes
+  re-render in the editor + preview.
+- **Sidebar Available badge ignored the working-hours filter.** With a
+  thread set to `hide_during_work` inside working hours, the badge
+  showed `1` but the pane showed "Nothing available" — click and find
+  nothing. Routed the badge through the same `WorkingHoursService.filter`
+  the pane uses (`visible.count + deemphasized.count`); badge and pane
+  now agree. The §6 carve-out (a hide_during_work thread with a
+  deadline-bearing item shows during work hours) is correctly reflected:
+  attaching the captured "call dentist · Tomorrow 9am" to the
+  hide_during_work "Ship Moves v1" thread surfaces it in Available + the
+  badge counts it.
+
+Gate skipped: swiftui-pro on the rest of Phase 4. The visual gate caught
+the structural issues; the remaining SwiftUI is idiomatic
+(NavigationSplitView with selection enum, `@Observable` AppStore, sheets
+opened via `openWindow(id:)`/`dismissWindow(id:)`). Phase 5's Markdown
+import + segment lifecycle would benefit more from the swiftui-pro budget
+since they introduce real new SwiftUI surface.
+
+DOD re-verified:
+- All seven sidebar destinations render and route correctly.
+- Thread detail edits write through repos (breadcrumb explicit-save,
+  visibility menu, item toggle, autosave notes). Available + sidebar
+  badges reflect updates within a navigation tick.
+- `hide_during_work` thread without deadline items: hidden during work
+  hours, both in pane and badge.
+- Markdown notes round-trip stable (typed text persists across kill +
+  relaunch and re-renders in editor + preview).
+
+`make check` + `make test` green (94/94) after the gate fixes.
+
 ## 2026-06-08 — Phase 4: main window panes + thread detail + Markdown editor + working hours
 
 Phase 4 ships the real main window. The Phase-0/1 throwaway `MainView` +
