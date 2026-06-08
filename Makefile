@@ -26,7 +26,7 @@ DEV_IDENTITY  ?= Apple Development: Thomas Ptacek (7F2QE7P59D)
 
 PROVISION_PROFILE ?=
 
-.PHONY: all deps build check release run clean install uninstall register help
+.PHONY: all deps build check test release run clean install uninstall register help
 
 all: build
 
@@ -34,6 +34,7 @@ help:
 	@echo "Build:"
 	@echo "  make / build      Build $(CONFIG) into ./$(APP)  (default)"
 	@echo "  check             Compile only (swift build) — no bundle/sign; CI/agent gate"
+	@echo "  test              Run the SwiftPM test suite (sanity round-trips)"
 	@echo "  release           Build release into ./$(APP)"
 	@echo "  run               Build and launch Moves"
 	@echo "  clean             Remove ./build/ ./.build/"
@@ -86,6 +87,11 @@ release: deps
 check: deps
 	swift build -c $(CONFIG)
 	@echo "✓ compiles ($(CONFIG))"
+
+# Run the test suite. Phase 1 ships round-trip tests for every repository.
+test: deps
+	swift test
+	@echo "✓ tests pass"
 
 # ---------------------------------------------------------------------------
 # Run / install / register

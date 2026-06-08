@@ -1,85 +1,87 @@
 import SwiftUI
 
+/// Throwaway phase-1 main window. Phase 4 replaces this with the real
+/// Available / Threads / Captured / Deadlines / Parking Lot views.
 struct MainView: View {
-    @Environment(MovesStore.self) private var store
-    @State private var selection: Move.ID?
-    @State private var newMoveTitle: String = ""
-    @FocusState private var addFieldFocused: Bool
+  @Environment(AppStore.self) private var store
+  @State private var selection: Thread.ID?
+  @State private var newThreadTitle: String = ""
+  @FocusState private var addFieldFocused: Bool
 
-    var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-        } detail: {
-            detail
+  var body: some View {
+    NavigationSplitView {
+      sidebar
+        .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+    } detail: {
+      detail
+    }
+    .navigationTitle("Moves")
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button("New Thread", systemImage: "plus") {
+          addFieldFocused = true
         }
-        .navigationTitle("Moves")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("New Move", systemImage: "plus") {
-                    addFieldFocused = true
+        .help("Focus the new-thread field")
+      }
+    }
+  }
+
+  private var sidebar: some View {
+    VStack(spacing: 0) {
+      List(selection: $selection) {
+        Section("Threads") {
+          ForEach(store.threads) { thread in
+            ThreadRow(thread: thread)
+              .tag(thread.id)
+              .contextMenu {
+                Button("Delete", role: .destructive) {
+                  store.delete(thread)
                 }
-                .help("Focus the new-move field")
-            }
+              }
+          }
         }
+      }
+      .listStyle(.sidebar)
+
+      Divider()
+
+      HStack(spacing: 8) {
+        Image(systemName: "plus.circle.fill")
+          .foregroundStyle(.tint)
+        TextField("Add a thread…", text: $newThreadTitle)
+          .textFieldStyle(.plain)
+          .focused($addFieldFocused)
+          .onSubmit(commitAdd)
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 10)
+      .background(.background.secondary)
     }
+  }
 
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            List(selection: $selection) {
-                Section("Moves") {
-                    ForEach(store.moves) { move in
-                        MoveRow(move: move)
-                            .tag(move.id)
-                            .contextMenu {
-                                Button("Delete", role: .destructive) {
-                                    store.delete(move)
-                                }
-                            }
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-
-            Divider()
-
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                    .foregroundStyle(.tint)
-                TextField("Add a move…", text: $newMoveTitle)
-                    .textFieldStyle(.plain)
-                    .focused($addFieldFocused)
-                    .onSubmit(commitAdd)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(.background.secondary)
-        }
+  @ViewBuilder
+  private var detail: some View {
+    if let selection, let thread = store.thread(id: selection) {
+      ThreadDetail(thread: thread)
+    } else if store.threads.isEmpty {
+      ContentUnavailableView(
+        "No Threads Yet",
+        systemImage: "figure.walk.motion",
+        description: Text("Add your first thread in the sidebar.")
+      )
+    } else {
+      ContentUnavailableView(
+        "Pick a Thread",
+        systemImage: "hand.point.up.left",
+        description: Text("Select a thread from the sidebar to see its details.")
+      )
     }
+  }
 
-    @ViewBuilder
-    private var detail: some View {
-        if let selection, let move = store.move(id: selection) {
-            MoveDetail(move: move)
-        } else if store.moves.isEmpty {
-            ContentUnavailableView(
-                "No Moves Yet",
-                systemImage: "figure.walk.motion",
-                description: Text("Add your first move in the sidebar.")
-            )
-        } else {
-            ContentUnavailableView(
-                "Pick a Move",
-                systemImage: "hand.point.up.left",
-                description: Text("Select a move from the sidebar to see its details.")
-            )
-        }
-    }
-
-    private func commitAdd() {
-        let trimmed = newMoveTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        store.add(title: trimmed)
-        newMoveTitle = ""
-    }
+  private func commitAdd() {
+    let trimmed = newThreadTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    store.addThread(title: trimmed)
+    newThreadTitle = ""
+  }
 }

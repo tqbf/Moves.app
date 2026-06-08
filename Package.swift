@@ -16,6 +16,15 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
+        ),
+        .testTarget(
+            name: "MovesTests",
+            dependencies: ["Moves"],
+            path: "Tests/MovesTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         )
     ]
 )
