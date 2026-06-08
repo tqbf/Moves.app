@@ -3,13 +3,17 @@ import Observation
 import UserNotifications
 
 /// Main-actor-bound view-model root for the app. Owns the database actor,
-/// the repositories, and the Phase 2 reminder/notification surface. Surfaces
-/// the slice of state the (currently throwaway) UI needs: lists of threads
-/// and captured items, plus the due-or-overdue hard count for the menu-bar
-/// badge.
+/// the repositories, the reminder/notification surface, and the cached
+/// working-hours config that drives §6 visibility filtering.
 ///
-/// Phases 3–5 will replace these surfaces with the real popover/main-window
-/// state.
+/// Phase-4 decision (carrying forward the Phase-1 deferred recommendation):
+/// the repo set is now non-optional. `init` traps if the DB can't open. The
+/// previous Optional pattern was a hedge against a UI surface that would
+/// distinguish "DB broken" from "DB empty" — Phase 4's settings work
+/// resolved that: working-hours settings only meaningfully render *after*
+/// the DB is open, and there's no other settings-flavored copy that needs
+/// the soft-fail path. If the DB can't open, nothing in the app works and
+/// we'd rather crash hard in dev than render a misleading empty surface.
 @Observable
 @MainActor
 final class AppStore {
@@ -36,6 +40,22 @@ final class AppStore {
   /// §22 invariant. Ordering matches `threads` (last_touched_at DESC).
   private(set) var availableThreads: [AvailableThread] = []
 
+  /// Open items grouped by thread id. Used by §6's "deadline-bearing"
+  /// carve-out (`hide_during_work` / `only_during_work` honor a non-nil
+  /// `due_at` on any open item to keep the thread visible). Rebuilt
+  /// alongside `availableThreads`.
+  private(set) var openItemsByThread: [String: [Item]] = [:]
+
+  /// Cached working-hours config from the `settings` table. Defaults
+  /// to `.default` until `loadWorkingHours()` resolves a stored row.
+  private(set) var workingHours: WorkingHours = .default
+
+  /// True if the most recent `isWorkTimeTick` call put us inside the
+  /// working-hours window. Driven by a `TimelineView` in the main window
+  /// (and recomputed on settings save). The popover's de-emphasis section
+  /// also reads this.
+  private(set) var isWorkTime: Bool = false
+
   /// Context for the currently-presenting flow sheet (Stop/Switch/Park).
   /// Sheets are separate `Window` scenes; they observe this value to know
   /// which thread they're acting on. The popover sets it before calling
@@ -53,21 +73,26 @@ final class AppStore {
 
   // MARK: - Persistence + services
 
-  let database: Database?
-  let threadRepository: ThreadRepository?
-  let segmentRepository: SegmentRepository?
-  let itemRepository: ItemRepository?
-  let alertRepository: AlertRepository?
-  let currentStateRepository: CurrentStateRepository?
-  let timeLogRepository: TimeLogRepository?
-  let settingsRepository: SettingsRepository?
+  let database: Database
+  let threadRepository: ThreadRepository
+  let segmentRepository: SegmentRepository
+  let itemRepository: ItemRepository
+  let alertRepository: AlertRepository
+  let currentStateRepository: CurrentStateRepository
+  let timeLogRepository: TimeLogRepository
+  let settingsRepository: SettingsRepository
   let reminderScheduler: ReminderScheduler?
+
+  /// Settings-table key for the working-hours JSON blob.
+  static let workingHoursSettingsKey = "working_hours"
 
   /// Designated initializer. Accepts an explicit path so tests can point
   /// at a temp directory; production constructs from `Database.defaultURL()`.
   /// `enableNotifications` lets test bundles skip the
   /// `UNUserNotificationCenter.current()` call, which throws inside the
   /// SwiftPM xctest host (no proper main bundle).
+  ///
+  /// Traps on DB-open failure (see type-level note above).
   init(
     databasePath: String = Database.defaultURL().path(percentEncoded: false),
     enableNotifications: Bool = true
@@ -87,32 +112,24 @@ final class AppStore {
         ? ReminderScheduler(alertRepository: alerts)
         : nil
     } catch {
-      self.database = nil
-      self.threadRepository = nil
-      self.segmentRepository = nil
-      self.itemRepository = nil
-      self.alertRepository = nil
-      self.currentStateRepository = nil
-      self.timeLogRepository = nil
-      self.settingsRepository = nil
-      self.reminderScheduler = nil
-      self.loadError = "Database failed to open: \(error)"
+      fatalError("Moves failed to open its database at \(databasePath): \(error)")
     }
   }
 
   // MARK: - Lifecycle
 
   func load() async {
+    await loadWorkingHours()
     await reloadThreads()
     await reloadCaptured()
     await reloadUpcoming()
     await reloadCurrent()
     await refreshDueCount()
     await rebuildAvailable()
+    refreshWorkTime(now: Date())
   }
 
   func reloadThreads() async {
-    guard let threadRepository else { return }
     do {
       threads = try await threadRepository.all()
     } catch {
@@ -121,7 +138,6 @@ final class AppStore {
   }
 
   func reloadCurrent() async {
-    guard let currentStateRepository else { return }
     do {
       current = try await currentStateRepository.get()
     } catch {
@@ -130,7 +146,6 @@ final class AppStore {
   }
 
   func reloadUpcoming() async {
-    guard let itemRepository else { return }
     let now = Int64(Date().timeIntervalSince1970)
     do {
       // upcomingHard returns hard-only future items — fine for headroom,
@@ -145,16 +160,21 @@ final class AppStore {
   /// Rebuild the Available projection: per-thread `MoveResolver.resolve`
   /// over segments + open items. Threads whose resolved move is nil are
   /// excluded — §22's "no re-entry, no Available" invariant.
+  ///
+  /// Also fills `openItemsByThread` so §6's deadline-bearing carve-out
+  /// (`hide_during_work` / `only_during_work`) can be tested view-side
+  /// without re-querying.
   func rebuildAvailable() async {
-    guard let segmentRepository, let itemRepository else { return }
     var built: [AvailableThread] = []
+    var openItems: [String: [Item]] = [:]
     for thread in threads where thread.status == .active {
       do {
         let segments = thread.kind == .regimented
           ? try await segmentRepository.forThread(thread.id)
           : []
-        let openItems = try await itemRepository.openForThread(thread.id)
-        if let move = MoveResolver.resolve(thread: thread, segments: segments, openItems: openItems) {
+        let items = try await itemRepository.openForThread(thread.id)
+        openItems[thread.id] = items
+        if let move = MoveResolver.resolve(thread: thread, segments: segments, openItems: items) {
           built.append(AvailableThread(thread: thread, move: move))
         }
       } catch {
@@ -162,10 +182,10 @@ final class AppStore {
       }
     }
     availableThreads = built
+    openItemsByThread = openItems
   }
 
   func reloadCaptured() async {
-    guard let itemRepository else { return }
     do {
       capturedItems = try await itemRepository.captured()
     } catch {
@@ -178,13 +198,50 @@ final class AppStore {
   /// overdue), per INITIAL-PLAN.md §16: badge is hard-only, ignores soft
   /// and ordinary captures.
   func refreshDueCount() async {
-    guard let itemRepository else { return }
     let now = Int64(Date().timeIntervalSince1970)
     do {
       dueOrOverdueHardCount = try await itemRepository.dueOrOverdueHardCount(now: now)
     } catch {
       loadError = "Badge refresh failed: \(error)"
     }
+  }
+
+  // MARK: - Working hours (Phase 4)
+
+  /// Read the persisted working-hours JSON from `settings`. Falls back to
+  /// `.default` on missing-or-malformed rows. Idempotent — safe to call from
+  /// `load()` and again after a settings save.
+  func loadWorkingHours() async {
+    do {
+      let raw = try await settingsRepository.get(Self.workingHoursSettingsKey)
+      if let raw, let parsed = WorkingHours.decodedJSON(raw) {
+        workingHours = parsed
+      } else {
+        workingHours = .default
+      }
+    } catch {
+      loadError = "Working hours load failed: \(error)"
+      workingHours = .default
+    }
+  }
+
+  /// Persist a working-hours change to `settings`, update the cache, and
+  /// recompute `isWorkTime` for the current moment. The Available view
+  /// re-renders automatically via @Observable.
+  func saveWorkingHours(_ hours: WorkingHours) async {
+    do {
+      try await settingsRepository.set(Self.workingHoursSettingsKey, value: hours.encodedJSON())
+      workingHours = hours
+      refreshWorkTime(now: Date())
+    } catch {
+      loadError = "Working hours save failed: \(error)"
+    }
+  }
+
+  /// Recompute `isWorkTime` for the supplied `now`. Cheap (`WorkingHours
+  /// Service.isInside` is pure) — call freely from a `TimelineView`.
+  func refreshWorkTime(now: Date) {
+    isWorkTime = WorkingHoursService.isInside(date: now, hours: workingHours)
   }
 
   // MARK: - Capture (Phase 2)
@@ -195,7 +252,6 @@ final class AppStore {
   /// the capture is dropped and nil is returned.
   @discardableResult
   func capture(_ input: String, now: Date = Date()) async -> ParsedCapture? {
-    guard let itemRepository, let reminderScheduler else { return nil }
     let parsed = CaptureParser.parse(input, now: now)
     guard !parsed.title.isEmpty else { return nil }
 
@@ -233,7 +289,7 @@ final class AppStore {
 
     // Schedule the at-due notification if applicable. The scheduler handles
     // the authorization-on-first-capture flow.
-    if parsed.dueAt != nil {
+    if parsed.dueAt != nil, let reminderScheduler {
       do {
         _ = try await reminderScheduler.scheduleAtDue(item: item)
         notificationsDenied = reminderScheduler.authorizationStatus == .denied
@@ -292,7 +348,6 @@ final class AppStore {
   /// "later" estimate. No segment selection: a future phase 5 may attach
   /// the displayed segment, but Phase 3 never advances segments.
   func start(_ thread: Thread) async {
-    guard let currentStateRepository else { return }
     let now = Int64(Date().timeIntervalSince1970)
     let state = CurrentState(threadId: thread.id, segmentId: nil, startedAt: now)
     do {
@@ -310,12 +365,11 @@ final class AppStore {
   /// (skipped when `rough == .none`), and re-touches the thread (§12).
   func stop(breadcrumb: String, rough: RoughTimeBucket) async {
     guard let threadId = current.threadId else { return }
-    guard let threadRepository, let currentStateRepository, let timeLogRepository else { return }
     do {
-      try await applyBreadcrumb(to: threadId, breadcrumb: breadcrumb, threadRepository: threadRepository)
+      try await applyBreadcrumb(to: threadId, breadcrumb: breadcrumb)
       try await currentStateRepository.clear()
       current = .empty
-      try await logRoughTime(threadId: threadId, segmentId: nil, rough: rough, timeLogRepository: timeLogRepository)
+      try await logRoughTime(threadId: threadId, segmentId: nil, rough: rough)
       await rebuildAvailable()
     } catch {
       loadError = "Stop failed: \(error)"
@@ -331,10 +385,9 @@ final class AppStore {
       await start(target)
       return
     }
-    guard let threadRepository, let timeLogRepository else { return }
     do {
-      try await applyBreadcrumb(to: previousId, breadcrumb: breadcrumb, threadRepository: threadRepository)
-      try await logRoughTime(threadId: previousId, segmentId: nil, rough: rough, timeLogRepository: timeLogRepository)
+      try await applyBreadcrumb(to: previousId, breadcrumb: breadcrumb)
+      try await logRoughTime(threadId: previousId, segmentId: nil, rough: rough)
     } catch {
       loadError = "Switch save failed: \(error)"
       return
@@ -346,10 +399,9 @@ final class AppStore {
   /// to parked, and — if it was the current thread — clears Current. No
   /// rough-time prompt (parking ≠ stopping, per the Phase 3 plan).
   func park(_ thread: Thread, breadcrumb: String) async {
-    guard let threadRepository, let currentStateRepository else { return }
     do {
-      try await applyBreadcrumb(to: thread.id, breadcrumb: breadcrumb, threadRepository: threadRepository)
-      try await applyStatus(threadId: thread.id, status: .parked, threadRepository: threadRepository)
+      try await applyBreadcrumb(to: thread.id, breadcrumb: breadcrumb)
+      try await applyStatus(threadId: thread.id, status: .parked)
       if current.threadId == thread.id {
         try await currentStateRepository.clear()
         current = .empty
@@ -365,11 +417,7 @@ final class AppStore {
   /// Persist a breadcrumb edit on `threadId` and re-touch the row (§12:
   /// breadcrumb edits update last_touched_at). The in-memory `threads`
   /// array is updated to match so the popover renders immediately.
-  private func applyBreadcrumb(
-    to threadId: String,
-    breadcrumb: String,
-    threadRepository: ThreadRepository
-  ) async throws {
+  private func applyBreadcrumb(to threadId: String, breadcrumb: String) async throws {
     guard let idx = threads.firstIndex(where: { $0.id == threadId }) else { return }
     let now = Int64(Date().timeIntervalSince1970)
     threads[idx].breadcrumb = breadcrumb
@@ -378,11 +426,7 @@ final class AppStore {
     try await threadRepository.update(threads[idx])
   }
 
-  private func applyStatus(
-    threadId: String,
-    status: ThreadStatus,
-    threadRepository: ThreadRepository
-  ) async throws {
+  private func applyStatus(threadId: String, status: ThreadStatus) async throws {
     guard let idx = threads.firstIndex(where: { $0.id == threadId }) else { return }
     let now = Int64(Date().timeIntervalSince1970)
     threads[idx].status = status
@@ -394,7 +438,6 @@ final class AppStore {
   /// resort the in-memory array. Used on Current changes (§12: any current
   /// change re-touches the affected thread).
   private func touch(threadId: String, at now: Int64) async {
-    guard let threadRepository else { return }
     guard let idx = threads.firstIndex(where: { $0.id == threadId }) else { return }
     threads[idx].lastTouchedAt = now
     threads[idx].updatedAt = now
@@ -417,8 +460,7 @@ final class AppStore {
   private func logRoughTime(
     threadId: String,
     segmentId: String?,
-    rough: RoughTimeBucket,
-    timeLogRepository: TimeLogRepository
+    rough: RoughTimeBucket
   ) async throws {
     guard let minutes = rough.minutes else { return }
     let entry = TimeLogEntry(
@@ -443,10 +485,9 @@ final class AppStore {
     return formatter.string(from: monday)
   }
 
-  // MARK: - Thread editing (throwaway phase-1 plumbing)
+  // MARK: - Thread editing (Phase 4)
 
   func addThread(title: String) {
-    guard let threadRepository else { return }
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     let thread = Thread(title: trimmed)
@@ -454,6 +495,25 @@ final class AppStore {
     Task { [threadRepository] in
       do { try await threadRepository.insert(thread) }
       catch { self.report("Insert failed: \(error)") }
+    }
+  }
+
+  /// Insert a new thread and return its id so the caller can navigate to it.
+  /// Used by the main-window "New Thread" button so the user lands inside
+  /// the row they just created.
+  @discardableResult
+  func createThread(title: String) async -> String? {
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let thread = Thread(title: trimmed)
+    do {
+      try await threadRepository.insert(thread)
+      threads.insert(thread, at: 0)
+      await rebuildAvailable()
+      return thread.id
+    } catch {
+      loadError = "Insert failed: \(error)"
+      return nil
     }
   }
 
@@ -468,7 +528,18 @@ final class AppStore {
 
   func updateBreadcrumb(_ thread: Thread, to breadcrumb: String) {
     guard let idx = threads.firstIndex(of: thread) else { return }
+    // §12: breadcrumb edits re-touch.
+    let now = Int64(Date().timeIntervalSince1970)
     threads[idx].breadcrumb = breadcrumb
+    threads[idx].updatedAt = now
+    threads[idx].lastTouchedAt = now
+    persist(threads[idx])
+    Task { await rebuildAvailable() }
+  }
+
+  func updateDetailMarkdown(_ thread: Thread, to markdown: String) {
+    guard let idx = threads.firstIndex(of: thread) else { return }
+    threads[idx].detailMarkdown = markdown
     threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
     persist(threads[idx])
   }
@@ -478,11 +549,27 @@ final class AppStore {
     threads[idx].status = status
     threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
     persist(threads[idx])
+    Task { await rebuildAvailable() }
+  }
+
+  func setKind(_ thread: Thread, to kind: ThreadKind) {
+    guard let idx = threads.firstIndex(of: thread) else { return }
+    threads[idx].kind = kind
+    threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
+    persist(threads[idx])
+  }
+
+  /// Set the §6 visibility policy on `thread`. Drives the de-emphasize /
+  /// hide / only-during-work behavior on the Available list.
+  func setVisibility(_ thread: Thread, to visibility: ThreadVisibility) {
+    guard let idx = threads.firstIndex(of: thread) else { return }
+    threads[idx].visibility = visibility
+    threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
+    persist(threads[idx])
   }
 
   func delete(_ thread: Thread) {
     threads.removeAll { $0.id == thread.id }
-    guard let threadRepository else { return }
     Task { [threadRepository, id = thread.id] in
       do { try await threadRepository.delete(id: id) }
       catch { self.report("Delete failed: \(error)") }
@@ -495,24 +582,175 @@ final class AppStore {
 
   var activeCount: Int { threads.lazy.filter { $0.status == .active }.count }
 
-  // MARK: - Captured item editing
+  // MARK: - Item editing (Phase 4)
 
-  /// Delete a captured item by ID. Used by the throwaway captured list.
+  /// Toggle an item's status between `.open` and `.done`. Used by the
+  /// thread-detail items checklist. Persists, then reloads the captured
+  /// feed (which may now include or exclude this item) and rebuilds
+  /// Available because §22's "no open items → no Available" can flip on
+  /// the last open item completing.
+  func toggleItemDone(_ item: Item) async {
+    let updated = nextStatus(for: item)
+    var copy = item
+    copy.status = updated
+    copy.updatedAt = Int64(Date().timeIntervalSince1970)
+    copy.completedAt = updated == .done ? copy.updatedAt : nil
+    do {
+      try await itemRepository.update(copy)
+      await reloadCaptured()
+      await rebuildAvailable()
+      await refreshDueCount()
+    } catch {
+      loadError = "Item toggle failed: \(error)"
+    }
+  }
+
+  private func nextStatus(for item: Item) -> ItemStatus {
+    switch item.status {
+    case .done: return .open
+    case .canceled: return .open
+    case .open, .captured: return .done
+    }
+  }
+
+  /// Attach a captured item to a thread. Persists the change and reloads.
+  /// Used by the Captured row's "Attach to thread" picker.
+  func attachToThread(_ threadId: String, item: Item) async {
+    var copy = item
+    copy.threadId = threadId
+    // Captured items become `.open` once they have a home.
+    copy.status = .open
+    copy.updatedAt = Int64(Date().timeIntervalSince1970)
+    do {
+      try await itemRepository.update(copy)
+      await reloadCaptured()
+      await rebuildAvailable()
+      await refreshDueCount()
+    } catch {
+      loadError = "Attach failed: \(error)"
+    }
+  }
+
+  /// Convert a captured item between `task` and `reminder` (and back to
+  /// `capture` if needed). Adjusts `interruption_kind` to match the new
+  /// kind so the badge query / popover icons stay coherent (§16: hard-only
+  /// badge comes from `interruption_kind = .hard`).
+  func convertItemKind(_ item: Item, to kind: ItemKind) async {
+    var copy = item
+    copy.kind = kind
+    switch kind {
+    case .reminder: copy.interruptionKind = .hard
+    case .task: copy.interruptionKind = .soft
+    case .capture: copy.interruptionKind = .none
+    }
+    copy.updatedAt = Int64(Date().timeIntervalSince1970)
+    do {
+      try await itemRepository.update(copy)
+      await reloadCaptured()
+      await refreshDueCount()
+    } catch {
+      loadError = "Convert failed: \(error)"
+    }
+  }
+
+  /// Mark a captured/open item done. Persists `completed_at` so phase 5/6
+  /// can show a completion history.
+  func markItemDone(_ item: Item) async {
+    var copy = item
+    copy.status = .done
+    let now = Int64(Date().timeIntervalSince1970)
+    copy.updatedAt = now
+    copy.completedAt = now
+    do {
+      try await itemRepository.update(copy)
+      await reloadCaptured()
+      await rebuildAvailable()
+      await refreshDueCount()
+    } catch {
+      loadError = "Mark done failed: \(error)"
+    }
+  }
+
+  /// Cancel an item — no completion timestamp, status moves to `.canceled`.
+  /// Distinct from delete: keeps a row for audit / undo.
+  func cancelItem(_ item: Item) async {
+    var copy = item
+    copy.status = .canceled
+    copy.updatedAt = Int64(Date().timeIntervalSince1970)
+    do {
+      try await itemRepository.update(copy)
+      await reloadCaptured()
+      await rebuildAvailable()
+      await refreshDueCount()
+    } catch {
+      loadError = "Cancel failed: \(error)"
+    }
+  }
+
+  /// Edit the `due_at` (and matching `due_kind`) for a captured item.
+  /// Passing nil clears the deadline. The notification is rescheduled (or
+  /// cancelled) to match.
+  func editDueAt(_ item: Item, dueAt: Date?, dueKind: DueKind) async {
+    var copy = item
+    if let dueAt {
+      copy.dueAt = Int64(dueAt.timeIntervalSince1970)
+      copy.dueKind = dueKind
+    } else {
+      copy.dueAt = nil
+      copy.dueKind = .none
+    }
+    copy.updatedAt = Int64(Date().timeIntervalSince1970)
+    do {
+      try await itemRepository.update(copy)
+      if let reminderScheduler {
+        await reminderScheduler.cancelPending(itemId: copy.id)
+        if copy.dueAt != nil, copy.interruptionKind == .hard {
+          _ = try? await reminderScheduler.scheduleAtDue(item: copy)
+        }
+      }
+      await reloadCaptured()
+      await refreshDueCount()
+    } catch {
+      loadError = "Edit due failed: \(error)"
+    }
+  }
+
+  // MARK: - Captured item editing (Phase 2 carry-over)
+
+  /// Delete a captured item by ID.
   func deleteCapturedItem(_ item: Item) {
     capturedItems.removeAll { $0.id == item.id }
-    guard let itemRepository, let reminderScheduler else { return }
     Task { [itemRepository, reminderScheduler, id = item.id] in
-      await reminderScheduler.cancelPending(itemId: id)
+      await reminderScheduler?.cancelPending(itemId: id)
       do { try await itemRepository.delete(id: id) }
       catch { self.report("Item delete failed: \(error)") }
       await self.refreshDueCount()
     }
   }
 
+  // MARK: - Convenience read projections
+
+  /// Threads matching `status`, used by Parking Lot / Threads list panes.
+  func threads(matching status: ThreadStatus) -> [Thread] {
+    threads.filter { $0.status == status }
+  }
+
+  /// All items with a non-nil `due_at` ordered ascending. Drives the
+  /// Deadlines pane. Returns directly from the in-memory `capturedItems` +
+  /// `openItemsByThread` projections — Phase 4's deadlines pane doesn't
+  /// need a fresh repo round-trip.
+  var deadlineItems: [Item] {
+    var all: [Item] = []
+    all.append(contentsOf: capturedItems.filter { $0.dueAt != nil })
+    for (_, items) in openItemsByThread {
+      all.append(contentsOf: items.filter { $0.dueAt != nil })
+    }
+    return all.sorted { ($0.dueAt ?? .max) < ($1.dueAt ?? .max) }
+  }
+
   // MARK: - Internal
 
   private func persist(_ thread: Thread) {
-    guard let threadRepository else { return }
     Task { [threadRepository] in
       do { try await threadRepository.update(thread) }
       catch { self.report("Update failed: \(error)") }

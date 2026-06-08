@@ -57,7 +57,7 @@ final class FlowRoundTripTests: XCTestCase {
     XCTAssertEqual(store.current.threadId, thread.id)
     XCTAssertNotNil(store.current.startedAt)
 
-    let touched = try await store.threadRepository?.find(id: thread.id)
+    let touched = try await store.threadRepository.find(id: thread.id)
     XCTAssertNotNil(touched?.lastTouchedAt, "start(_:) must update last_touched_at (§12)")
   }
 
@@ -71,13 +71,13 @@ final class FlowRoundTripTests: XCTestCase {
 
     XCTAssertEqual(store.current, .empty)
 
-    let persisted = try await store.threadRepository?.find(id: thread.id)
+    let persisted = try await store.threadRepository.find(id: thread.id)
     XCTAssertEqual(persisted?.breadcrumb, "Halfway through filtering paragraph")
 
     // 45m bucket lands as one TimeLogEntry row.
-    let log = try await store.timeLogRepository?.forThread(thread.id)
-    XCTAssertEqual(log?.count, 1)
-    XCTAssertEqual(log?.first?.roughMinutes, 45)
+    let log = try await store.timeLogRepository.forThread(thread.id)
+    XCTAssertEqual(log.count, 1)
+    XCTAssertEqual(log.first?.roughMinutes, 45)
   }
 
   func testStopWithNoneBucketSkipsTimeLog() async throws {
@@ -86,8 +86,8 @@ final class FlowRoundTripTests: XCTestCase {
 
     await store.stop(breadcrumb: "later", rough: .none)
 
-    let log = try await store.timeLogRepository?.forThread(thread.id)
-    XCTAssertEqual(log?.count ?? 0, 0, "rough == .none must not write a time_log row")
+    let log = try await store.timeLogRepository.forThread(thread.id)
+    XCTAssertEqual(log.count, 0, "rough == .none must not write a time_log row")
   }
 
   // MARK: - Switch
@@ -101,15 +101,15 @@ final class FlowRoundTripTests: XCTestCase {
 
     XCTAssertEqual(store.current.threadId, writing.id, "current must point at the new target")
 
-    let pythonAfter = try await store.threadRepository?.find(id: python.id)
+    let pythonAfter = try await store.threadRepository.find(id: python.id)
     XCTAssertEqual(pythonAfter?.breadcrumb, "GET nil bulk string", "previous thread must keep the saved breadcrumb")
 
-    let pythonLog = try await store.timeLogRepository?.forThread(python.id)
-    XCTAssertEqual(pythonLog?.count, 1, "time log must be attributed to the *previous* thread")
-    XCTAssertEqual(pythonLog?.first?.roughMinutes, 60)
+    let pythonLog = try await store.timeLogRepository.forThread(python.id)
+    XCTAssertEqual(pythonLog.count, 1, "time log must be attributed to the *previous* thread")
+    XCTAssertEqual(pythonLog.first?.roughMinutes, 60)
 
-    let writingLog = try await store.timeLogRepository?.forThread(writing.id)
-    XCTAssertEqual(writingLog?.count ?? 0, 0, "new thread must not get a time-log entry on switch")
+    let writingLog = try await store.timeLogRepository.forThread(writing.id)
+    XCTAssertEqual(writingLog.count, 0, "new thread must not get a time-log entry on switch")
   }
 
   func testSwitchWithNoPriorCurrentJustStarts() async throws {
@@ -118,8 +118,8 @@ final class FlowRoundTripTests: XCTestCase {
 
     XCTAssertEqual(store.current.threadId, writing.id)
     // No previous thread to attribute to — no time-log entry anywhere.
-    let log = try await store.timeLogRepository?.forThread(writing.id)
-    XCTAssertEqual(log?.count ?? 0, 0)
+    let log = try await store.timeLogRepository.forThread(writing.id)
+    XCTAssertEqual(log.count, 0)
   }
 
   // MARK: - Park
@@ -130,7 +130,7 @@ final class FlowRoundTripTests: XCTestCase {
 
     await store.park(thread, breadcrumb: "tomorrow: dry-fit + glue-up")
 
-    let persisted = try await store.threadRepository?.find(id: thread.id)
+    let persisted = try await store.threadRepository.find(id: thread.id)
     XCTAssertEqual(persisted?.status, .parked)
     XCTAssertEqual(persisted?.breadcrumb, "tomorrow: dry-fit + glue-up")
 
@@ -138,8 +138,8 @@ final class FlowRoundTripTests: XCTestCase {
     XCTAssertFalse(store.availableThreads.contains(where: { $0.thread.id == thread.id }))
 
     // §5.4 — park writes no time-log entry.
-    let log = try await store.timeLogRepository?.forThread(thread.id)
-    XCTAssertEqual(log?.count ?? 0, 0)
+    let log = try await store.timeLogRepository.forThread(thread.id)
+    XCTAssertEqual(log.count, 0)
   }
 
   func testParkClearsCurrentWhenParkingTheCurrentThread() async throws {

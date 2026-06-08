@@ -2,6 +2,183 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 4: main window panes + thread detail + Markdown editor + working hours
+
+Phase 4 ships the real main window. The Phase-0/1 throwaway `MainView` +
+`ThreadRow` + `ThreadDetail` are gone, replaced by a §4.2 sidebar with
+seven destinations (Available / Current / Threads / Captured / Deadlines /
+Parking Lot / Settings) plus a §4.3 thread detail with breadcrumb,
+read-only segment summary, items checklist, and a Markdown notes editor.
+Working-hours visibility (§6) is wired through.
+
+What landed:
+
+- `Sources/Moves/Views/Window/RootWindow.swift` — `NavigationSplitView`
+  with the §4.2 sidebar. Sidebar items carry a badge count
+  (available/captured/deadlines/parking-lot etc.). A `TimelineView` ticks
+  once a minute so `AppStore.isWorkTime` flips automatically at the
+  start/end of the working-hours window. Selection drives the detail pane;
+  thread rows route via `.thread(id)`.
+- `Sources/Moves/Views/Window/SidebarDestination.swift` — one enum so the
+  sidebar list and detail switch can't drift.
+- `Sources/Moves/Views/Window/PaneShell.swift` — shared title + subtitle
+  scaffold used by every pane.
+- `Sources/Moves/Views/Window/AvailableView.swift` — same §22-filtered
+  projection the popover uses, run through `WorkingHoursService.filter`
+  for the §6 visibility policy. Two-section render: normal Available, then
+  "De-emphasized during working hours".
+- `Sources/Moves/Views/Window/CurrentDetailView.swift` — Current pane.
+  Opens Stop / Park as the Phase-3 flow windows so editing UX is the same
+  across surfaces.
+- `Sources/Moves/Views/Window/ThreadsListView.swift` — full thread list
+  grouped by status, with an inline "New thread…" field that routes to
+  the new thread detail on commit.
+- `Sources/Moves/Views/Window/CapturedView.swift` +
+  `Captured/CapturedRow.swift` — §13 processing actions on a per-row
+  context menu / overflow menu: attach to thread (sheet picker), convert
+  to reminder/task/capture (inline), edit due time (sheet, per the open-
+  question decision), mark done, cancel, delete.
+- `Sources/Moves/Views/Window/DeadlinesView.swift` — one list of every
+  item with a `due_at`, overdue rendered muted-orange. Wider scope than
+  the popover Upcoming (hard-only); this pane includes soft + none too.
+- `Sources/Moves/Views/Window/ParkingLotView.swift` — parked threads
+  with an inline "Unpark" button.
+- `Sources/Moves/Views/Window/ThreadDetail/ThreadDetailView.swift` —
+  §4.3 layout: title (inline-editable), three pills (Status / Kind /
+  Visibility — each a single-tap `Menu`), breadcrumb editor with explicit
+  "Save breadcrumb" button, current-segment summary (read-only, Phase 5
+  owns editing), items list with checkbox toggle that flips
+  `Item.status`, and the Markdown notes editor.
+- `Sources/Moves/Views/Window/Settings/SettingsView.swift` — Phase 4
+  scope: working-hours weekday picker + start/end `DatePicker`s. Saves
+  through `AppStore.saveWorkingHours`. Other settings explicitly punted
+  to Phase 6 with a footer line.
+- `Sources/Moves/Views/Markdown/MarkdownEditorView.swift` — plain
+  `TextEditor` source + `AttributedString(markdown:)` preview. Wide
+  layout (>= 560pt) shows them side-by-side; narrow swaps to a segmented
+  picker (Edit / Preview). The preview parses block-level constructs
+  (ATX headings 1–6, unordered lists with 2-space-per-level indent,
+  paragraphs, fenced code blocks) and renders inline syntax through
+  `AttributedString.MarkdownParsingOptions.inlineOnlyPreservingWhitespace`.
+  Tables / images / footnotes are out of scope (v2 candidate).
+- `Sources/Moves/Domain/WorkingHours.swift` — value type for the §6
+  config + JSON DTO (`{days, start, end}`) for the `settings` table.
+- `Sources/Moves/Services/WorkingHoursService.swift` — pure
+  `isInside(date:hours:calendar:) -> Bool` plus the per-row
+  `classify(visibility:isWorkTime:hasDeadlineItem:) -> .visible /
+  .deemphasized / .hidden` and an `available × hasDeadline ->
+  FilteredAvailable` partitioning function. Midnight-wrap supported; both
+  endpoints are start-inclusive, end-exclusive.
+
+- `Sources/Moves/Model/AppStore.swift` — gained:
+  - `workingHours: WorkingHours` (cache, defaults to `.default`)
+  - `isWorkTime: Bool` (derived; recomputed by `refreshWorkTime(now:)`)
+  - `openItemsByThread: [String: [Item]]` for §6's deadline-bearing
+    carve-out (no extra repo round-trip per row)
+  - `deadlineItems: [Item]` (sorted by `dueAt`)
+  - `loadWorkingHours()` / `saveWorkingHours(_:)` /
+    `refreshWorkTime(now:)`
+  - `attachToThread(_:item:)`, `convertItemKind(_:to:)`,
+    `setVisibility(_:to:)`, `setKind(_:to:)`, `toggleItemDone(_:)`,
+    `markItemDone(_:)`, `cancelItem(_:)`, `editDueAt(_:dueAt:dueKind:)`,
+    `updateDetailMarkdown(_:to:)`, `createThread(title:) async`
+  - `threads(matching:)`, helper used by Parking Lot / Threads pane.
+
+Removed:
+- `Sources/Moves/Views/MainView.swift`,
+  `Sources/Moves/Views/ThreadRow.swift`,
+  `Sources/Moves/Views/ThreadDetail.swift` — all Phase-0/1 throwaway.
+
+AppStore Optional-repo decision (Phase 1's deferred Phase C):
+
+- **Dropped.** The repo set is now non-optional and `init` traps on DB
+  open failure. Phase 1's hedge was "Phase 4 settings might want to
+  distinguish DB-broken from DB-empty in copy"; with the settings UI in
+  hand, that surface didn't materialize — the settings pane only renders
+  meaningfully *after* the DB is open, and there's no other settings-
+  flavored copy that benefits from a soft-fail path. If the DB can't
+  open, nothing in the app works; a hard crash with a diagnostic message
+  is the right failure mode. The change deleted ~14 `guard let` clauses
+  across AppStore and one Optional declaration per repo. The tests
+  followed (`store.threadRepository?.find` → `store.threadRepository.find`).
+
+Open-question decisions honored:
+
+- **Visibility-policy control: inline pill in the thread-detail header.**
+  Single-tap `Menu`, no submenu indicator, sits next to the Status and
+  Kind pills. One-click affordance — matches §2.10's "passive display
+  aid" spirit.
+- **Captured "edit due time": sheet.** Reuses the same shape as the
+  attach-to-thread picker (modal, fixed-width, Save / Cancel chrome).
+  Inline date pickers would clutter every captured row; a sheet stays
+  out of the way until needed.
+
+Working-hours JSON shape (stored in `settings` table under
+`working_hours`):
+
+```json
+{ "days": [1, 2, 3, 4, 5], "start": "09:00", "end": "17:30" }
+```
+
+- ISO-8601 weekdays (1 = Monday, 7 = Sunday).
+- `"HH:mm"` strings so the row is human-readable in a SQLite browser.
+- `start == end` is a zero-length window (never inside). `start > end`
+  wraps midnight (e.g. 22:00–06:00 covers night shift). Both endpoints
+  are inclusive of the start minute and exclusive of the end minute.
+
+Tests (94 total, was 62):
+
+- `Tests/MovesTests/WorkingHoursServiceTests.swift` — 22 cases. Boundary
+  tests for `isInside` (start-of-window, one-minute-before-start, end-of-
+  window exclusive, one-minute-before-end, Saturday/Sunday outside
+  Mon–Fri windows, empty days, zero-length window). Midnight-wrap
+  coverage (22:00–06:00 at 22:30 → inside, at 03:00 → inside, at 06:00 →
+  outside-exclusive, at noon → outside). Full §6 visibility-classification
+  matrix (all four ThreadVisibility cases × inside/outside × deadline-
+  bearing yes/no). Codable JSON round-trip + malformed-input rejection.
+- `Tests/MovesTests/Phase4AppStoreTests.swift` — 10 cases. Round-trip
+  for the new AppStore writes: attach-to-thread flips threadId + status;
+  convert-to-reminder sets `interruption_kind = .hard` (badge query
+  depends on it); convert-to-task sets `.soft`; setVisibility persists;
+  working-hours default when settings row is absent; working-hours save
+  → reload (new AppStore against same DB sees the same value, the DOD's
+  "round-trip stable" assertion adapted for settings); `refreshWorkTime`
+  flips `isWorkTime`; toggle-item-done flips status + sets / clears
+  `completedAt`; edit-due-at sets and clears `due_at` + `due_kind`.
+  Plus the DOD's Markdown-notes round-trip: write detail_markdown →
+  re-open AppStore → byte-identical persisted value.
+
+Phase 4 invariants verified by tests:
+
+- §22 (no re-entry, no Available) still holds — Phase 3's flow tests
+  still pass against the new AppStore.
+- §6 (working-hours visibility) holds at the service layer; the view
+  consumes `WorkingHoursService.filter(...)` rather than reimplementing
+  the policy.
+- Markdown notes round-trip stable (write → relaunch → still there) —
+  the DOD's assertion is tested directly.
+
+`make check` + `make test` green (94/94).
+
+Heads-up for future agents:
+
+- The popover (Phase 3) still uses its own visibility grouping (it
+  hard-codes `downweightWork` → de-emphasized). A future cleanup could
+  route both surfaces through `WorkingHoursService.filter` for one
+  source of truth; Phase 4 deliberately left the popover untouched to
+  keep blast radius small.
+- The Phase-3 popover footer "Parked" button opens the main window; now
+  that the Parking Lot pane exists, a follow-on could pass an initial
+  sidebar selection through (currently lands on Available). Out of scope
+  for Phase 4 — the user gets there via the sidebar in one click.
+- The Markdown preview is a hand-rolled block walker (headings / lists /
+  paragraphs / code fences). If Phase 5/6 needs richer rendering
+  (tables, images), reach for swift-markdown rather than expanding this
+  walker.
+- AppStore's `Optional<ReminderScheduler>` stays — tests can opt out of
+  `UNUserNotificationCenter.current()` via `enableNotifications: false`.
+  That Optional is feature-flagging, not a DB-open-failure hedge.
+
 ## 2026-06-08 — Phase 3 gate: popover wiring + macos-design fixes
 
 End-to-end visual gate (popover + Start/Switch/Stop/Park flows) caught five

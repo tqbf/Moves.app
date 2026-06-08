@@ -26,12 +26,12 @@ struct MovesApp: App {
 
   var body: some Scene {
     Window("Moves", id: PopoverWindowID.main.rawValue) {
-      MainView()
+      RootWindow()
         .environment(store)
-        .frame(minWidth: 720, minHeight: 440)
+        .frame(minWidth: 760, minHeight: 480)
         .task { await bootstrap() }
     }
-    .defaultSize(width: 920, height: 600)
+    .defaultSize(width: 980, height: 640)
     .commands {
       CommandGroup(replacing: .newItem) {
         Button("New Thread") { store.addThread(title: "New Thread") }
