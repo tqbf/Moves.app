@@ -24,6 +24,31 @@ struct MovesApp: App {
   @State private var capturePalette: CapturePaletteController?
   @State private var notificationDelegate: NotificationDelegate?
 
+  /// BLACK CHESS KNIGHT (U+265E) rendered through NSAttributedString into
+  /// a template NSImage. The system tints templates for menu-bar context
+  /// automatically (white in dark menu bars, black in light), and a
+  /// rendered-image path gets us a thicker, more legible glyph than
+  /// SwiftUI's `Text("♞").font(.system(weight: .black))` — chess piece
+  /// glyphs in San Francisco are weight-invariant.
+  fileprivate static let knightTemplate: NSImage = {
+    let glyph = "\u{265E}"
+    let pt: CGFloat = 18
+    let font = NSFont.systemFont(ofSize: pt, weight: .black)
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: NSColor.black,
+    ]
+    let attr = NSAttributedString(string: glyph, attributes: attrs)
+    let bounds = attr.size()
+    let size = NSSize(width: ceil(bounds.width), height: ceil(bounds.height))
+    let image = NSImage(size: size)
+    image.lockFocus()
+    attr.draw(at: .zero)
+    image.unlockFocus()
+    image.isTemplate = true
+    return image
+  }()
+
   init() {
     // SwiftPM (Swift 6.3) generates `Bundle.module` as
     //   Bundle.main.bundleURL.appendingPathComponent("<Name>.bundle")
@@ -136,11 +161,20 @@ struct MovesApp: App {
       // preference, so a user who disabled the badge gets the neutral
       // knight even with deadlines approaching.
       HStack(spacing: 2) {
-        Text("\u{265E}")
+        // Pre-rendered template NSImage of the chess knight glyph. The
+        // raw `Text("♞")` rendered too thin at menu-bar size because the
+        // glyph doesn't have weighted variants in San Francisco —
+        // `.weight(.black)` is a no-op on symbol characters. Rendering
+        // through NSImage at 18pt with isTemplate=true lets the menu bar
+        // ink it for light/dark mode while keeping the bolder look of a
+        // larger-font draw.
+        Image(nsImage: Self.knightTemplate)
+          .renderingMode(store.renderedBadgeCount > 0 ? .original : .template)
           .foregroundStyle(store.renderedBadgeCount > 0 ? Color.red : .primary)
           .accessibilityLabel("Moves")
         if store.renderedBadgeCount > 0 {
           Text("\(store.renderedBadgeCount)")
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.red)
             .accessibilityLabel("\(store.renderedBadgeCount) due or overdue")
         }
