@@ -121,9 +121,15 @@ struct SegmentDetail: View {
       try? await Task.sleep(nanoseconds: 600_000_000)
       guard !Task.isCancelled else { return }
       guard newValue == move else { return }
-      var copy = segment
-      copy.builtInMove = newValue
-      await store.editSegment(copy)
+      // Re-resolve from the store at write time. The captured `segment`
+      // parameter is a snapshot from when the View built — if completion
+      // or skip ran in another surface during the 600ms debounce, that
+      // snapshot's status/orderIndex are stale and would clobber the
+      // current row on update.
+      guard var fresh = store.segmentsByThread[segment.threadId]?
+              .first(where: { $0.id == segment.id }) else { return }
+      fresh.builtInMove = newValue
+      await store.editSegment(fresh)
     }
   }
 
@@ -133,9 +139,10 @@ struct SegmentDetail: View {
       try? await Task.sleep(nanoseconds: 600_000_000)
       guard !Task.isCancelled else { return }
       guard newValue == body_ else { return }
-      var copy = segment
-      copy.bodyMarkdown = newValue
-      await store.editSegment(copy)
+      guard var fresh = store.segmentsByThread[segment.threadId]?
+              .first(where: { $0.id == segment.id }) else { return }
+      fresh.bodyMarkdown = newValue
+      await store.editSegment(fresh)
     }
   }
 

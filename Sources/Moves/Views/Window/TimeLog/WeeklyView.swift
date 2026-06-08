@@ -116,12 +116,7 @@ struct WeeklyView: View {
       return summary.weekStart
     }
     let sunday = Calendar.iso8601Monday.date(byAdding: .day, value: 6, to: monday) ?? monday
-    let f = DateFormatter()
-    f.locale = Locale(identifier: "en_US_POSIX")
-    f.calendar = .iso8601Monday
-    f.timeZone = Calendar.iso8601Monday.timeZone
-    f.dateFormat = "MMM d"
-    return "\(f.string(from: monday)) – \(f.string(from: sunday))"
+    return "\(Self.weekHeaderFormatter.string(from: monday)) – \(Self.weekHeaderFormatter.string(from: sunday))"
   }
 
   private var isCurrentWeek: Bool {
@@ -144,12 +139,30 @@ struct WeeklyView: View {
 
   // MARK: - Static helpers
 
-  private static func mondayDate(from yyyyMMdd: String) -> Date? {
+  /// Cached "MMM d" formatter used by `weekHeaderLabel`. The pane re-renders
+  /// on each working-hours timeline tick; building a `DateFormatter` per
+  /// render is wasted work and matches the codebase's pattern of
+  /// `static let` formatters (cf. `MarkdownEditorView`, `CapturedPopoverRow`).
+  private static let weekHeaderFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.calendar = .iso8601Monday
+    f.timeZone = Calendar.iso8601Monday.timeZone
+    f.dateFormat = "MMM d"
+    return f
+  }()
+
+  /// Parse a `yyyy-MM-dd` Monday key back into a `Date` for the header.
+  private static let weekStartParser: DateFormatter = {
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
     f.calendar = .iso8601Monday
     f.timeZone = Calendar.iso8601Monday.timeZone
     f.dateFormat = "yyyy-MM-dd"
-    return f.date(from: yyyyMMdd)
+    return f
+  }()
+
+  private static func mondayDate(from yyyyMMdd: String) -> Date? {
+    weekStartParser.date(from: yyyyMMdd)
   }
 }

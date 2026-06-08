@@ -2,6 +2,52 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 5 gate (swiftui-pro, partial): autosave staleness + formatter caching
+
+swiftui-pro code-level gate caught two real findings on Phase 5's new
+SwiftUI surface. Applied both. The visual gate (computer-use) is pending
+— the screen was locked when this commit ran, so the macos-design /
+end-to-end DOD verification will happen in a follow-on gate.
+
+What I fixed:
+
+- **`SegmentDetail.swift` autosave captured a stale Segment snapshot.**
+  `scheduleMoveAutosave` / `scheduleBodyAutosave` closed over the
+  `segment` parameter that the View was built with, then waited 600ms,
+  then mutated and wrote `editSegment(copy)`. If during that window the
+  segment got completed / skipped / reordered from another surface, the
+  in-flight Task would clobber `status`, `orderIndex`, etc. with the old
+  snapshot's values. Both autosave handlers now re-resolve the segment
+  fresh from `store.segmentsByThread[segment.threadId]` at write time,
+  mutate only the targeted field, and persist that. Matches the
+  read-at-click-time idiom from the Phase-3 gate.
+- **`WeeklyView.swift` built a `DateFormatter` on every render.** The
+  pane re-renders on each working-hours timeline tick + on every anchor
+  shift; allocating a new formatter twice per tick (header label +
+  parser) burned cycles for no reason. Both formatters are now `static
+  let` properties, matching the codebase pattern in
+  `MarkdownEditorView`, `CapturedPopoverRow`, and the Phase-3 popover
+  rows.
+
+Skipped (deliberate):
+
+- **`body_` → `bodyText` rename in `SegmentDetail.swift`.** Cosmetic;
+  cost > value.
+- **`ImportMarkdownView.swift` legacy `provider.loadObject` →
+  `.dropDestination(for: URL.self)`.** Modern API, but works correctly,
+  and changing the drop plumbing now risks regressing the drag-drop UX
+  before the visual gate has even exercised it. Revisit when the visual
+  gate has confirmed the current path works.
+
+`make check` + `make test` green (131/131) after the fixes.
+
+**Pending (visual + macos-design gate):** screen lock at gate time
+blocked the end-to-end DOD walkthrough (§9 example import, segment
+completion advancing the active row, weekly view aggregating across
+multiple completion logs, popover Current section showing the segment
+line). Phase 6 is being kicked off in parallel; the visual gate for both
+phases will run as a single pass when the screen unlocks.
+
 ## 2026-06-08 — Phase 5: regimented threads + segment lifecycle + Markdown import + weekly time log
 
 Phase 5 makes regimented threads first-class: ordered segment lifecycle
