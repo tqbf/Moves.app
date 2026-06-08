@@ -17,7 +17,7 @@ struct AvailableView: View {
   var onSelectThread: (String) -> Void
 
   var body: some View {
-    PaneListShell(title: "Available", subtitle: subtitle) {
+    PaneListShell(title: "Available", subtitle: { workingStatus }) {
       let filtered = filtered()
       if filtered.visible.isEmpty, filtered.deemphasized.isEmpty {
         ContentUnavailableView(
@@ -48,10 +48,42 @@ struct AvailableView: View {
     }
   }
 
-  private var subtitle: String {
-    store.isWorkTime
-      ? "Inside working hours. \(WorkingHours.formatMinute(store.workingHours.startMinute))–\(WorkingHours.formatMinute(store.workingHours.endMinute))."
-      : "Outside working hours."
+  /// Subtitle: a "Working: yes/no" pill plus the configured hours range
+  /// as a muted caption. The pill is the at-a-glance signal — "yes" is
+  /// the more urgent state (the user is at work, the de-emphasized
+  /// section is being suppressed) so it gets the orange urgency tint
+  /// that the menubar badge and Upcoming hard-deadline icons already
+  /// use. "No" gets a neutral gray. Hours stay visible so the user can
+  /// see what window the answer is being computed against without
+  /// opening Settings.
+  @ViewBuilder
+  private var workingStatus: some View {
+    let working = store.isWorkTime
+    let tint: Color = working ? .orange : .secondary
+    let label = working ? "yes" : "no"
+    HStack(spacing: 6) {
+      Text("Working:")
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+      HStack(spacing: 0) {
+        Text(label)
+          .font(.system(size: 11, weight: .semibold))
+      }
+      .padding(.horizontal, 7)
+      .padding(.vertical, 2)
+      .foregroundStyle(tint)
+      .background(
+        Capsule(style: .continuous)
+          .fill(tint.opacity(0.15))
+      )
+      Text("·")
+        .font(.system(size: 13))
+        .foregroundStyle(.tertiary)
+      Text("\(WorkingHours.formatMinute(store.workingHours.startMinute))–\(WorkingHours.formatMinute(store.workingHours.endMinute))")
+        .font(.system(size: 12))
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+    }
   }
 
   private func filtered() -> WorkingHoursService.FilteredAvailable {

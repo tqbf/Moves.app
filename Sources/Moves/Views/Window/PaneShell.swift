@@ -9,9 +9,9 @@ import SwiftUI
 /// Phase-3 gate note about `ScrollView` collapsing children does NOT
 /// apply here, so the body is wrapped in `ScrollView` for natural content
 /// overflow.
-struct PaneShell<Content: View>: View {
+struct PaneShell<Subtitle: View, Content: View>: View {
   let title: String
-  var subtitle: String?
+  @ViewBuilder var subtitle: () -> Subtitle
   @ViewBuilder var content: () -> Content
 
   var body: some View {
@@ -29,6 +29,14 @@ struct PaneShell<Content: View>: View {
   }
 }
 
+extension PaneShell where Subtitle == PaneSubtitleText {
+  init(title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+    self.title = title
+    self.subtitle = { PaneSubtitleText(text: subtitle) }
+    self.content = content
+  }
+}
+
 /// Variant of `PaneShell` for panes whose body is a `List` (or starts
 /// with one). The header sits above the list at the same horizontal inset
 /// as `PaneShell`; the list provides its own scrolling and renders the
@@ -37,9 +45,9 @@ struct PaneShell<Content: View>: View {
 /// Use `PaneListShell` whenever the pane wants per-row swipe-to-delete —
 /// `.swipeActions` is only honored inside `List`/`Form`, not a plain
 /// `VStack { ForEach }`.
-struct PaneListShell<Content: View>: View {
+struct PaneListShell<Subtitle: View, Content: View>: View {
   let title: String
-  var subtitle: String?
+  @ViewBuilder var subtitle: () -> Subtitle
   @ViewBuilder var content: () -> Content
 
   var body: some View {
@@ -55,21 +63,42 @@ struct PaneListShell<Content: View>: View {
   }
 }
 
+extension PaneListShell where Subtitle == PaneSubtitleText {
+  init(title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+    self.title = title
+    self.subtitle = { PaneSubtitleText(text: subtitle) }
+    self.content = content
+  }
+}
+
+/// Default subtitle rendering: a 13pt secondary `Text` line, or nothing
+/// at all when `text` is nil/empty. Exists so the string-based
+/// `PaneShell` / `PaneListShell` initializers preserve their old
+/// behavior — callers that want a richer subtitle (pills, chips, etc.)
+/// pass a `@ViewBuilder` closure instead.
+struct PaneSubtitleText: View {
+  let text: String?
+
+  var body: some View {
+    if let text, !text.isEmpty {
+      Text(text)
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+    }
+  }
+}
+
 /// Shared title/subtitle block. Pulled out of both shells so the typography
 /// can't drift between scrollable and list-hosted panes.
-private struct PaneHeader: View {
+private struct PaneHeader<Subtitle: View>: View {
   let title: String
-  let subtitle: String?
+  @ViewBuilder let subtitle: () -> Subtitle
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(title)
         .font(.system(size: 24, weight: .semibold))
-      if let subtitle, !subtitle.isEmpty {
-        Text(subtitle)
-          .font(.system(size: 13))
-          .foregroundStyle(.secondary)
-      }
+      subtitle()
     }
   }
 }
