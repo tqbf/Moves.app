@@ -18,6 +18,11 @@ struct RootWindow: View {
   /// onboarding window scene when the bootstrap flips the flag (or the
   /// user clicks "Show onboarding again" in Settings).
   @Bindable private var onboardingPresenter = OnboardingPresenter.shared
+  /// Watch the new-thread presenter so Cmd-N from the App-scope menu can
+  /// switch the sidebar to `.threadsList`. The flag is cleared by
+  /// `ThreadsListView` once it focuses its input — clearing here would
+  /// race a not-yet-mounted ThreadsListView and drop the focus signal.
+  @Bindable private var newThreadPresenter = NewThreadPresenter.shared
 
   var body: some View {
     NavigationSplitView {
@@ -39,6 +44,13 @@ struct RootWindow: View {
     .onChange(of: onboardingPresenter.presentRequested) { _, requested in
       if requested {
         openWindow(id: PopoverWindowID.onboarding.rawValue)
+      }
+    }
+    .onChange(of: newThreadPresenter.requestPending) { _, requested in
+      // Switch the sidebar so ThreadsListView mounts; the input focus
+      // (and clearing the flag) is owned by ThreadsListView itself.
+      if requested {
+        selection = .threadsList
       }
     }
     .onAppear {

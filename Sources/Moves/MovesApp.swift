@@ -88,8 +88,17 @@ struct MovesApp: App {
     .defaultSize(width: 980, height: 640)
     .commands {
       CommandGroup(replacing: .newItem) {
-        Button("New Thread") { store.addThread(title: "New Thread") }
-          .keyboardShortcut("n")
+        Button("New Thread") {
+          // Cmd-N routes to the Threads pane's inline "New thread…" field
+          // rather than silently inserting an "Untitled" row. `NSApp
+          // .activate` brings the main window forward if a popover or
+          // sheet had focus; the presenter flag tells `RootWindow` to
+          // flip selection to `.threadsList` and `ThreadsListView` to
+          // focus the input on mount.
+          NSApp.activate(ignoringOtherApps: true)
+          NewThreadPresenter.shared.request()
+        }
+        .keyboardShortcut("n")
         Button("Capture…") { capturePalette?.show() }
           .keyboardShortcut("k", modifiers: [.command, .shift])
       }
