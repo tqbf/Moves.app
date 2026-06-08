@@ -17,7 +17,10 @@ struct AvailableView: View {
   var onSelectThread: (String) -> Void
 
   var body: some View {
-    PaneListShell(title: "Available", subtitle: { workingStatus }) {
+    PaneListShell(title: "Available") {
+      workingStatus
+        .padding(.horizontal, 28)
+        .padding(.bottom, 12)
       let filtered = filtered()
       if filtered.visible.isEmpty, filtered.deemphasized.isEmpty {
         ContentUnavailableView(
@@ -48,14 +51,14 @@ struct AvailableView: View {
     }
   }
 
-  /// Subtitle: a "Working: yes/no" pill plus the configured hours range
-  /// as a muted caption. The pill is the at-a-glance signal — "yes" is
-  /// the more urgent state (the user is at work, the de-emphasized
-  /// section is being suppressed) so it gets the orange urgency tint
-  /// that the menubar badge and Upcoming hard-deadline icons already
-  /// use. "No" gets a neutral gray. Hours stay visible so the user can
-  /// see what window the answer is being computed against without
-  /// opening Settings.
+  /// "Working: yes/no" pill plus the configured hours range. "Yes" gets
+  /// the orange urgency tint the menubar badge and Upcoming hard-deadline
+  /// icons already use; "no" gets neutral gray. Hours stay visible so the
+  /// user can see the window the answer is being computed against without
+  /// opening Settings. Rendered directly under the PaneListShell header
+  /// rather than through a subtitle slot — the shell's subtitle is a
+  /// plain string by design, and one richer caller doesn't justify
+  /// generic ceremony at every call site.
   @ViewBuilder
   private var workingStatus: some View {
     let working = store.isWorkTime
@@ -65,17 +68,15 @@ struct AvailableView: View {
       Text("Working:")
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
-      HStack(spacing: 0) {
-        Text(label)
-          .font(.system(size: 11, weight: .semibold))
-      }
-      .padding(.horizontal, 7)
-      .padding(.vertical, 2)
-      .foregroundStyle(tint)
-      .background(
-        Capsule(style: .continuous)
-          .fill(tint.opacity(0.15))
-      )
+      Text(label)
+        .font(.system(size: 11, weight: .semibold))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .foregroundStyle(tint)
+        .background(
+          Capsule(style: .continuous)
+            .fill(tint.opacity(0.15))
+        )
       Text("·")
         .font(.system(size: 13))
         .foregroundStyle(.tertiary)
@@ -83,6 +84,7 @@ struct AvailableView: View {
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
         .monospacedDigit()
+      Spacer()
     }
   }
 
