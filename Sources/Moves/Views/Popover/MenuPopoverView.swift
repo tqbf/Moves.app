@@ -37,21 +37,23 @@ struct MenuPopoverView: View {
 
       Divider()
 
-      ScrollView {
-        VStack(spacing: 0) {
-          CurrentSection(currentSegment: nil)
-          Divider().padding(.horizontal, 14)
+      // ScrollView removed: inside MenuBarExtra's window popover it
+      // proposes unbounded height to its children and the section content
+      // collapses to zero. The popover already scrolls itself if total
+      // content overflows the OS-imposed max height, so the sections can
+      // stack directly in a VStack.
+      VStack(spacing: 0) {
+        CurrentSection(currentSegment: nil)
+        Divider().padding(.horizontal, 14)
 
-          UpcomingSection(headroom: headroom)
-          Divider().padding(.horizontal, 14)
+        UpcomingSection(headroom: headroom)
+        Divider().padding(.horizontal, 14)
 
-          AvailableSection()
-          Divider().padding(.horizontal, 14)
+        AvailableSection()
+        Divider().padding(.horizontal, 14)
 
-          CapturedSection()
-        }
+        CapturedSection()
       }
-      .frame(maxHeight: 460)
 
       Divider()
 
@@ -79,6 +81,10 @@ struct MenuPopoverView: View {
   // MARK: - Footer
 
   private var footer: some View {
+    // 320pt-wide popover. "Park" and "Open" (short labels) read as native
+    // Mac controls; icon-only versions force hover-tooltip discovery,
+    // which isn't how menu-bar popovers usually navigate. Capture stays
+    // primary (label + icon + global shortcut hint).
     HStack(spacing: 8) {
       Button {
         CapturePaletteSingleton.shared?.show()
@@ -87,29 +93,29 @@ struct MenuPopoverView: View {
           .labelStyle(.titleAndIcon)
       }
       .buttonStyle(.bordered)
-
-      Button {
-        // Parking Lot has its own pane in Phase 4's main window; until
-        // then, open the main window so the user has somewhere to land.
-        openWindow(id: PopoverWindowID.main.rawValue)
-        NSApp.activate(ignoringOtherApps: true)
-      } label: {
-        Label("Parking Lot", systemImage: "tray.and.arrow.down")
-          .labelStyle(.titleAndIcon)
-      }
-      .buttonStyle(.bordered)
-      .help("Opens the main window — dedicated Parking Lot pane lands in Phase 4")
+      .keyboardShortcut("k", modifiers: [.command, .shift])
+      .help("Open capture palette (⇧⌘K or ⌥Space)")
 
       Spacer()
 
-      Button {
+      // "Parked" (noun, destination) avoids colliding with CurrentSection's
+      // "Park" (verb, action). Reads as "navigate to the parked-threads
+      // view", distinct from "park the current thread".
+      Button("Parked") {
         openWindow(id: PopoverWindowID.main.rawValue)
         NSApp.activate(ignoringOtherApps: true)
-      } label: {
-        Label("Open App", systemImage: "macwindow")
-          .labelStyle(.titleAndIcon)
       }
       .buttonStyle(.bordered)
+      .keyboardShortcut("p", modifiers: [.command, .shift])
+      .help("Parking Lot — view parked threads (⇧⌘P; dedicated pane lands in Phase 4)")
+
+      Button("Open") {
+        openWindow(id: PopoverWindowID.main.rawValue)
+        NSApp.activate(ignoringOtherApps: true)
+      }
+      .buttonStyle(.bordered)
+      .keyboardShortcut("o", modifiers: [.command, .shift])
+      .help("Open the main window (⇧⌘O)")
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)

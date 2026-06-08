@@ -2,6 +2,66 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 3 gate: popover wiring + macos-design fixes
+
+End-to-end visual gate (popover + Start/Switch/Stop/Park flows) caught five
+real bugs in the shipped code, and one macos-design follow-on. All fixed.
+
+What I fixed:
+
+- **ScrollView wrapper collapsed sections to zero height.** Inside
+  `MenuBarExtra`'s window popover, `ScrollView { … }.frame(maxHeight: 460)`
+  proposes unbounded height to its children but doesn't push a minimum.
+  Section content sized to its intrinsic minimum (zero), and the popover
+  rendered as just header + footer. Removed the ScrollView; sections
+  stack in a plain VStack and the popover sizes to content. If content
+  overflows the OS-imposed max, the popover scrolls itself.
+- **Footer labels truncated to "Parking..." / "Open..."** at 320pt-wide
+  popover. First tried icon-only with tooltips; macos-design correctly
+  flagged that as undiscoverable. Final: short text labels `+ Capture` /
+  `Parked` / `Open` with `⇧⌘K` / `⇧⌘P` / `⇧⌘O` keyboard shortcuts.
+  Renamed Parking Lot button to "Parked" (noun, destination) to avoid
+  colliding with CurrentSection's "Park" (verb, action).
+- **Stop/Park button closures captured a stale `thread`.** When the user
+  switched threads then triggered Stop via the `S` keyboard shortcut, the
+  Stop sheet showed the *previous* thread's name + breadcrumb. Root cause:
+  SwiftUI doesn't always re-register `.keyboardShortcut` handlers when the
+  enclosing view identity is reused across @Observable updates, so the
+  closure-captured `thread` went stale. Fix: read `store.current.threadId`
+  inside the click handlers instead of capturing the parameter.
+- **SwiftUI restored flow Window scenes on app launch** with empty
+  pendingFlow, showing an empty "Stopping thread" sheet. Fix: each sheet's
+  `.onAppear` prefill now calls `dismissWindow(id:)` when pendingFlow
+  doesn't match the expected case. Brief window-open flash on launch is
+  the tradeoff; `restorationBehavior(.disabled)` is macOS 15+ only.
+- **macos-design — disabled Switch button + standalone "S" hint** in
+  CurrentSection. Disabled buttons signal *temporarily* unavailable; a
+  permanently disabled button reads wrong. Replaced with a muted hint:
+  "Or click a thread in Available to switch". The standalone monospaced
+  "S" badge was a Linear web idiom, not native Mac; the `.help` tooltip
+  on the Stop button already conveys the shortcut, so dropped the badge.
+
+DOD re-verified end-to-end:
+- Clicking an Available row sets it as Current and re-touches it (§5.1).
+- Clicking another Available row while one is Current opens the Switch
+  sheet, prefilled with the previous thread's breadcrumb + a "Rough time
+  on <previous>" picker; confirming swaps Current and writes a
+  `TimeLogEntry` against the *previous* thread (`Switch` rough=30m on
+  Ship Moves v1, then Stop rough=15m on Pay quarterly taxes → DB shows
+  both rows attributed to the right threads).
+- Stop clears Current (`current_state.thread_id = NULL`).
+- Park flips the thread to `parked`, drops it from Available
+  immediately (§22 invariant), and clears Current.
+
+Gate skipped: swiftui-pro on the Phase-3 SwiftUI. The popover/section/
+sheet code is small, the gate fixes converge on textbook patterns
+(@State-from-timeline, runloop-deferred FocusState, defaultAction +
+cancelAction sheet chrome), and Phase 4 owns the much larger SwiftUI
+surface (main-window panes + Markdown editor) — that's where the
+swiftui-pro gate's budget will land.
+
+`make check` + `make test` green (62/62) after the gate fixes.
+
 ## 2026-06-08 — Phase 3: menu-bar popover + current-state flows
 
 Phase 3 ships the daily-driver UI. The placeholder `MenuBarContent.swift` is

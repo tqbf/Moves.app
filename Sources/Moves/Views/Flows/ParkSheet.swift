@@ -52,7 +52,13 @@ struct ParkSheet: View {
   private func prefill() {
     guard case let .park(threadId) = store.pendingFlow,
           let thread = store.thread(id: threadId)
-    else { return }
+    else {
+      // See StopSheet.prefill — guard against SwiftUI scene restoration.
+      resolvedThread = nil
+      breadcrumb = ""
+      dismissWindow(id: PopoverWindowID.park.rawValue)
+      return
+    }
     resolvedThread = thread
     breadcrumb = thread.breadcrumb
   }

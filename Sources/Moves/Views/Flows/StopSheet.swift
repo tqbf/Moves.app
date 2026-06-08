@@ -68,12 +68,21 @@ struct StopSheet: View {
   // MARK: - Actions
 
   private func prefill() {
+    rough = .none
     guard case let .stop(threadId) = store.pendingFlow,
           let thread = store.thread(id: threadId)
-    else { return }
+    else {
+      // Window scenes restore on launch even when we didn't open them
+      // (SwiftUI default behavior). If we appear without a matching
+      // pendingFlow, the user didn't ask for this — dismiss immediately
+      // rather than showing an empty "Stopping thread" sheet.
+      resolvedThread = nil
+      breadcrumb = ""
+      dismissWindow(id: PopoverWindowID.stop.rawValue)
+      return
+    }
     resolvedThread = thread
     breadcrumb = thread.breadcrumb
-    rough = .none
   }
 
   private func confirm() {

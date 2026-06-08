@@ -67,11 +67,18 @@ struct SwitchSheet: View {
   // MARK: - Actions
 
   private func prefill() {
-    guard case let .switch(fromId, toId) = store.pendingFlow else { return }
+    rough = .none
+    guard case let .switch(fromId, toId) = store.pendingFlow else {
+      // See StopSheet.prefill — guard against SwiftUI scene restoration.
+      previousThread = nil
+      targetThread = nil
+      breadcrumb = ""
+      dismissWindow(id: PopoverWindowID.switchFlow.rawValue)
+      return
+    }
     previousThread = store.thread(id: fromId)
     targetThread = store.thread(id: toId)
     breadcrumb = previousThread?.breadcrumb ?? ""
-    rough = .none
   }
 
   private func confirm() {

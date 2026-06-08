@@ -68,41 +68,45 @@ struct CurrentSection: View {
   }
 
   private func actionRow(for thread: Thread) -> some View {
-    HStack(spacing: 8) {
-      Button("Stop") { openStop(for: thread) }
-        .buttonStyle(.bordered)
-        .keyboardShortcut("s", modifiers: [])
-        .help("Stop the current thread (S)")
+    // Buttons read the current thread fresh from `store.current` at click
+    // time instead of capturing `thread` from the closure scope. SwiftUI
+    // does not always re-register a `.keyboardShortcut` handler when the
+    // enclosing View identity is reused across @Observable updates, so a
+    // captured `thread` can go stale right after a Switch.
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Button("Stop", action: openStopForCurrent)
+          .buttonStyle(.bordered)
+          .keyboardShortcut("s", modifiers: [])
+          .help("Stop the current thread (S)")
 
-      Button("Switch") {
-        // Switch from-the-popover requires picking a target. The
-        // canonical entry point is clicking another Available row.
-        // Surface that hint inline rather than building a thread picker.
+        Button("Park", action: openParkForCurrent)
+          .buttonStyle(.bordered)
+          .help("Park the current thread")
+
+        Spacer()
       }
-      .buttonStyle(.bordered)
-      .disabled(true)
-      .help("Click a thread in Available to switch")
-
-      Button("Park") { openPark(for: thread) }
-        .buttonStyle(.bordered)
-
-      Spacer()
-      Text("S")
-        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+      // Permanently-unavailable buttons (the disabled "Switch" button)
+      // misuse macOS disabled state, which means "temporarily
+      // unavailable". A muted hint communicates the same affordance
+      // without the dead-button pattern.
+      Text("Or click a thread in Available to switch")
+        .font(.system(size: 11))
         .foregroundStyle(.tertiary)
-        .help("Press S to stop")
     }
   }
 
   // MARK: - Window openers
 
-  private func openStop(for thread: Thread) {
-    store.pendingFlow = .stop(threadId: thread.id)
+  private func openStopForCurrent() {
+    guard let id = store.current.threadId else { return }
+    store.pendingFlow = .stop(threadId: id)
     openWindow(id: PopoverWindowID.stop.rawValue)
   }
 
-  private func openPark(for thread: Thread) {
-    store.pendingFlow = .park(threadId: thread.id)
+  private func openParkForCurrent() {
+    guard let id = store.current.threadId else { return }
+    store.pendingFlow = .park(threadId: id)
     openWindow(id: PopoverWindowID.park.rawValue)
   }
 }
