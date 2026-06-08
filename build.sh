@@ -59,8 +59,16 @@ SWIFT_BIN_DIR="$(dirname "$BIN_PATH")"
 shopt -s nullglob
 for bundle in "$SWIFT_BIN_DIR"/*.bundle; do
     name=$(basename "$bundle")
-    cp -R "$bundle" "$APP_PATH/Contents/Resources/"
+    # Bundle goes at Contents/Resources/<Name>.bundle. The SwiftPM-
+    # generated `Bundle.module` accessor was patched above to look there
+    # instead of the .app's top level (codesign won't seal anything at
+    # the .app root).
+    cp -R "$bundle" "$APP_PATH/Contents/Resources/$name"
     bundle_id="${name%.bundle}"
+    # Rewrite Info.plist with the minimum keys macOS 14's `Bundle(path:)`
+    # accepts. SwiftPM emits just `CFBundleDevelopmentRegion`; macOS 15+
+    # accepts that, macOS 14 rejects the directory as "not a bundle" and
+    # returns nil.
     cat > "$APP_PATH/Contents/Resources/$name/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -83,7 +91,7 @@ for bundle in "$SWIFT_BIN_DIR"/*.bundle; do
 </dict>
 </plist>
 PLIST
-    echo "  + bundled $name (Info.plist rewritten for macOS 14)"
+    echo "  + bundled $name in Contents/Resources/ (Info.plist rewritten for macOS 14)"
 done
 shopt -u nullglob
 

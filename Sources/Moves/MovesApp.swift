@@ -24,6 +24,35 @@ struct MovesApp: App {
   @State private var capturePalette: CapturePaletteController?
   @State private var notificationDelegate: NotificationDelegate?
 
+  init() {
+    // SwiftPM (Swift 6.3) generates `Bundle.module` as
+    //   Bundle.main.bundleURL.appendingPathComponent("<Name>.bundle")
+    // — i.e. looks at the .app root, NOT Contents/Resources/. macOS
+    // codesign refuses to seal arbitrary files at the .app root, so we
+    // ship the real bundle in Contents/Resources/ and rely on a runtime
+    // symlink to satisfy the lookup. This `init` runs before any view
+    // (and therefore any `Bundle.module` access) is constructed, so the
+    // symlink exists by the time `String.localized.getter` fires.
+    //
+    // The symlink is created lazily; if it already exists, this is a
+    // no-op. Failure is silent — the worst case is the same crash the
+    // user already sees.
+    let appURL = Bundle.main.bundleURL
+    let resourcesURL = appURL.appendingPathComponent("Contents/Resources", isDirectory: true)
+    guard let contents = try? FileManager.default
+            .contentsOfDirectory(at: resourcesURL, includingPropertiesForKeys: nil) else { return }
+    for url in contents where url.pathExtension == "bundle" {
+      let name = url.lastPathComponent
+      let linkPath = appURL.appendingPathComponent(name).path
+      if !FileManager.default.fileExists(atPath: linkPath) {
+        try? FileManager.default.createSymbolicLink(
+          atPath: linkPath,
+          withDestinationPath: "Contents/Resources/\(name)"
+        )
+      }
+    }
+  }
+
   var body: some Scene {
     Window("Moves", id: PopoverWindowID.main.rawValue) {
       RootWindow()
