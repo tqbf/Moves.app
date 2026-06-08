@@ -46,14 +46,14 @@ struct MovesApp: App {
         .environment(store)
     } label: {
       // Plain-text "•N" suffix matches INITIAL-PLAN §16's "menu-bar icon may
-      // show a simple badge" — no custom drawing. SwiftUI's MenuBarExtra
-      // label renders a `Text` next to the SF Symbol.
-      Label {
-        if store.dueOrOverdueHardCount > 0 {
-          Text(" •\(store.dueOrOverdueHardCount)")
-        }
-      } icon: {
+      // show a simple badge". SwiftUI's MenuBarExtra label renders the icon
+      // and any sibling Text views in the bar — but Label { Text } icon:
+      // { Image } collapses to just the icon. An HStack keeps both visible.
+      HStack(spacing: 2) {
         Image(systemName: "figure.walk.motion")
+        if store.dueOrOverdueHardCount > 0 {
+          Text("•\(store.dueOrOverdueHardCount)")
+        }
       }
     }
     .menuBarExtraStyle(.window)

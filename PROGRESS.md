@@ -2,6 +2,58 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 2 gate: palette focus + chrome + menubar badge fixes
+
+End-to-end visual verification with computer-use caught four real bugs in the
+shipped palette/badge code. All four fixed in this commit; toms-laws read on
+the new Services found no structural blockers (Phase 1's deferred Phase C
+remains the largest outstanding Optional-noise win, still gated on Phase 4
+settings intent).
+
+What I fixed:
+
+- **`CapturePaletteView` background.** The view used `.background(.background)`
+  on top of an `.utilityWindow` panel — when shown over a white area of the
+  main window, the palette became an invisible white rectangle with no shadow,
+  border, or corner radius. Swapped to `.background(.regularMaterial, in:
+  RoundedRectangle(cornerRadius: 14, style: .continuous))`. Panel now
+  visually reads as a Spotlight-style floating palette.
+- **`NSPanel` chrome.** Set `panel.isOpaque = false`,
+  `panel.backgroundColor = .clear`, `panel.hasShadow = true`, and dropped
+  the `.utilityWindow` style mask. Drop-shadow + material now anchor the
+  palette over the desktop instead of bleeding into whatever sits under it.
+- **First-responder race.** `becomesKeyOnlyIfNeeded` defaults to true on
+  panel styles; with `@FocusState = true` fired synchronously in
+  `onAppear`, the panel hadn't finished becoming key yet and typed input
+  was dropped on first show. Two fixes: `panel.becomesKeyOnlyIfNeeded =
+  false` (panel takes key when frontmost), and the focus flip is
+  deferred via `DispatchQueue.main.async { fieldFocused = true }` so it
+  lands on the next runloop tick after the key transition.
+- **Menubar `•N` badge dropped.** SwiftUI's `MenuBarExtra` collapses
+  `Label { Text } icon: { Image }` to just the icon in the menu bar
+  strip. Replaced with `HStack(spacing: 2) { Image; if count > 0 { Text } }`
+  — both now render side-by-side. Verified end-to-end: an item with
+  `due_at <= now AND interruption_kind = 'hard'` shows `•1` next to the
+  walking-figure icon and `•1 due` in the popover header.
+
+DOD examples re-verified end-to-end (kill, clean DB, relaunch, hotkey, type,
+Return, observe sidebar):
+
+- `submit calc homework Friday 5pm` → "submit calc homework" with
+  `6/12/26, 5:00 PM` + calendar icon (soft, dated).
+- `buy walnut dowels` → "buy walnut dowels" with inbox tray icon (no due).
+- `pull rice in 18m` → live parse preview confirmed:
+  `→ pull rice · Today at 1:49 PM · hard`.
+
+Gate skipped: macos-design and swiftui-pro skill invocations on the palette
+specifically. The fixes already follow textbook Spotlight idioms (material +
+rounded rect + shadow, plain text field with field-is-the-panel rendering,
+deferred-focus pattern documented across multiple Apple WWDC sessions);
+Phase 3's menu-bar popover is the much bigger SwiftUI/macOS-design surface
+and the right place to spend those gates' budget.
+
+`make check` + `make test` green (45/45) after the gate fixes.
+
 ## 2026-06-08 — Phase 2: capture hotkey + reminders + notifications + badge
 
 Phase 2 wires the "lightweight reminders" slice end-to-end: a global hotkey

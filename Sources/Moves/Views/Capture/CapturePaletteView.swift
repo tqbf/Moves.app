@@ -20,10 +20,11 @@ struct CapturePaletteView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      // The text field.
+      // The text field — Spotlight-style: big plain text, no border, the
+      // panel itself is the visual chrome.
       TextField("Capture (try \"pull rice in 18m\")", text: $draft)
         .textFieldStyle(.plain)
-        .font(.system(size: 16, weight: .regular))
+        .font(.system(size: 22, weight: .regular))
         .focused($fieldFocused)
         .onSubmit(save)
 
@@ -52,13 +53,20 @@ struct CapturePaletteView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(16)
-    .frame(width: 460)
-    .background(.background)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 16)
+    .frame(width: 540)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     .onAppear {
       draft = ""
       lastSaved = nil
-      fieldFocused = true
+      // Defer first-responder assignment one runloop tick: when the host
+      // NSPanel finishes becoming key, @FocusState resolves correctly.
+      // Setting fieldFocused = true synchronously in onAppear races the
+      // panel's key transition and drops typed input on first show.
+      DispatchQueue.main.async {
+        fieldFocused = true
+      }
     }
     .onExitCommand(perform: onDismiss)
     .onKeyPress(.escape) {
@@ -158,8 +166,8 @@ final class CapturePaletteController {
     )
 
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 460, height: 110),
-      styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel, .utilityWindow],
+      contentRect: NSRect(x: 0, y: 0, width: 540, height: 100),
+      styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
       backing: .buffered,
       defer: false
     )
@@ -169,6 +177,15 @@ final class CapturePaletteController {
     panel.level = .floating
     panel.hidesOnDeactivate = false
     panel.isReleasedWhenClosed = false
+    // Default for .utilityWindow / panel styles is true — the panel only
+    // becomes key when a control "needs" focus. SwiftUI's @FocusState
+    // doesn't fire that signal reliably across hosted panels, so typing
+    // gets dropped on first show. Force the panel to take key focus when
+    // frontmost so the field is immediately editable.
+    panel.becomesKeyOnlyIfNeeded = false
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = true
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     panel.contentViewController = hosting
     return panel
