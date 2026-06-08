@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Build Moves.app from the SwiftPM target. No Xcode IDE, no xcodebuild —
+# just `swift build` + a hand-rolled .app bundle + Apple Dev signing.
+#
+#   ./build.sh debug       # default
+#   ./build.sh release
+#
+# Env vars (set by Makefile):
+#   SIGN_IDENTITY    codesign identity (defaults to ad-hoc "-")
+#   PROVISION_PROFILE   optional provisioning profile to embed
+set -euo pipefail
+
+CONFIG="${1:-debug}"
+APP_NAME="Moves"
+BUILD_DIR="build"
+APP_PATH="$BUILD_DIR/$APP_NAME.app"
+SOURCES_DIR="Sources/$APP_NAME"
+INFO_PLIST="$SOURCES_DIR/Resources/Info.plist"
+ENTITLEMENTS="$APP_NAME/$APP_NAME.entitlements"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+PROVISION_PROFILE="${PROVISION_PROFILE:-}"
+
+if [[ "$CONFIG" != "debug" && "$CONFIG" != "release" ]]; then
+    echo "✗ unknown configuration: $CONFIG  (expected: debug | release)" >&2
+    exit 1
+fi
+
+echo "→ swift build -c $CONFIG"
+swift build -c "$CONFIG"
+
+BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
+if [[ ! -x "$BIN_PATH" ]]; then
+    echo "✗ binary missing: $BIN_PATH" >&2
+    exit 1
+fi
+
+echo "→ assembling $APP_PATH"
+rm -rf "$APP_PATH"
+mkdir -p "$APP_PATH/Contents/MacOS"
+mkdir -p "$APP_PATH/Contents/Resources"
+
+cp "$BIN_PATH" "$APP_PATH/Contents/MacOS/$APP_NAME"
+cp "$INFO_PLIST" "$APP_PATH/Contents/Info.plist"
+
+# PkgInfo is a tiny legacy file LaunchServices still likes.
+printf 'APPL????' > "$APP_PATH/Contents/PkgInfo"
+
+if [[ -n "$PROVISION_PROFILE" && -f "$PROVISION_PROFILE" ]]; then
+    cp "$PROVISION_PROFILE" "$APP_PATH/Contents/embedded.provisionprofile"
+fi
+
+echo "→ codesign (identity: $SIGN_IDENTITY)"
+CODESIGN_ARGS=(--force --sign "$SIGN_IDENTITY")
+if [[ "$CONFIG" == "release" ]]; then
+    CODESIGN_ARGS+=(--options runtime --timestamp)
+fi
+if [[ -f "$ENTITLEMENTS" ]]; then
+    CODESIGN_ARGS+=(--entitlements "$ENTITLEMENTS")
+fi
+codesign "${CODESIGN_ARGS[@]}" "$APP_PATH"
+codesign --verify --verbose=1 "$APP_PATH"
+
+echo "✓ built $APP_PATH ($CONFIG)"
