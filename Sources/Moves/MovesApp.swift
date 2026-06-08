@@ -19,6 +19,40 @@ extension KeyboardShortcuts.Name {
   )
 }
 
+/// Invisible helper that resizes the hosting NSWindow to a target size on
+/// its first appearance. Workaround for SwiftUI's `.defaultSize(...)`
+/// being ignored when the scene's content is a `NavigationSplitView` —
+/// SwiftUI prefers the split view's intrinsic ideal-width sum (typically
+/// ~920×600 for our layout), which makes the empty-state panes look
+/// stranded in a vast canvas. We override exactly once per launch.
+private struct WindowSizeInitializer: NSViewRepresentable {
+  let width: CGFloat
+  let height: CGFloat
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    DispatchQueue.main.async { [width, height] in
+      guard let window = view.window else { return }
+      // Only resize if the user hasn't already moved/sized the window.
+      // SwiftUI persists window frames; honoring a saved frame means
+      // we only force-resize on a truly first launch.
+      let savedKey = "NSWindow Frame \(window.frameAutosaveName)"
+      guard UserDefaults.standard.string(forKey: savedKey) == nil else { return }
+      var frame = window.frame
+      // Recenter the resized window on the same midpoint so it doesn't
+      // visibly jump to the top-left during the resize.
+      let cx = frame.midX
+      let cy = frame.midY
+      frame.size = NSSize(width: width, height: height)
+      frame.origin = NSPoint(x: cx - width / 2, y: cy - height / 2)
+      window.setFrame(frame, display: true, animate: false)
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
 @main
 struct MovesApp: App {
   @State private var store = AppStore()
@@ -118,10 +152,16 @@ struct MovesApp: App {
     Window("Moves", id: PopoverWindowID.main.rawValue) {
       RootWindow()
         .environment(store)
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 720, minHeight: 460)
         .task { await bootstrap() }
+        // SwiftUI's NavigationSplitView computes its own intrinsic width
+        // by summing column ideals, which makes the window open at
+        // ~920×600 regardless of `.defaultSize`. Forcing the initial NSWindow
+        // frame from a background task is the reliable workaround until
+        // SwiftUI honors `.defaultSize` on NavigationSplitView scenes.
+        .background(WindowSizeInitializer(width: 800, height: 540))
     }
-    .defaultSize(width: 980, height: 640)
+    .defaultSize(width: 800, height: 540)
     .commands {
       // View → "Back to Threads" (Cmd-[). The standard macOS "back"
       // convention used by Safari, Mail, Finder, Xcode. We pull the
