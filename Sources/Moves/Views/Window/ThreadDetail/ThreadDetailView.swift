@@ -16,6 +16,14 @@ struct ThreadDetailView: View {
   @State private var editingBreadcrumb: String = ""
   @State private var notes: String = ""
 
+  // Hover + focus state for the title field. A `.plain` TextField at large
+  // semibold weight reads as static text; we add a subtle hover background,
+  // a pencil glyph on hover, and a soft rounded border on focus so the
+  // edit affordance is obvious without making the title look like a heavy
+  // form field. Mirrors Finder's inline rename / Notion's title field.
+  @State private var titleHovering: Bool = false
+  @FocusState private var titleFocused: Bool
+
   // Snapshot of which thread these editing buffers are tied to. SwiftUI
   // reuses View identity across @Observable updates, so we re-prefill the
   // local buffers whenever the bound thread id changes.
@@ -55,10 +63,7 @@ struct ThreadDetailView: View {
 
   private var header: some View {
     VStack(alignment: .leading, spacing: 10) {
-      TextField("Thread title", text: $editingTitle)
-        .textFieldStyle(.plain)
-        .font(.system(size: 24, weight: .semibold))
-        .onSubmit(commitTitle)
+      titleField
 
       HStack(spacing: 8) {
         StatusPill(thread: thread)
@@ -66,6 +71,49 @@ struct ThreadDetailView: View {
         VisibilityPill(thread: thread)
       }
     }
+  }
+
+  /// Editable title with macOS-native rename affordances: subtle hover
+  /// background, pencil glyph on hover, accent-coloured rounded border on
+  /// focus. The negative horizontal padding cancels the inner padding so
+  /// the title's left edge stays flush with the rest of the header column.
+  private var titleField: some View {
+    HStack(spacing: 8) {
+      TextField("Thread title", text: $editingTitle)
+        .textFieldStyle(.plain)
+        .font(.system(size: 24, weight: .semibold))
+        .focused($titleFocused)
+        .onSubmit(commitTitle)
+
+      Image(systemName: "pencil")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.tertiary)
+        .opacity(titleHovering && !titleFocused ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: titleHovering)
+        .animation(.easeOut(duration: 0.12), value: titleFocused)
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
+    .background(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(titleBackgroundFill)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .strokeBorder(titleBorderColor, lineWidth: titleFocused ? 1 : 0)
+    )
+    .onHover { titleHovering = $0 }
+    .padding(.horizontal, -8)
+  }
+
+  private var titleBackgroundFill: Color {
+    if titleFocused { return Color(nsColor: .textBackgroundColor) }
+    if titleHovering { return Color.primary.opacity(0.04) }
+    return .clear
+  }
+
+  private var titleBorderColor: Color {
+    titleFocused ? Color.accentColor : .clear
   }
 
   // MARK: - Breadcrumb
