@@ -57,6 +57,7 @@ struct CapturedRow: View {
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .fixedSize()
+      .accessibilityLabel("Actions for \(item.title)")
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)

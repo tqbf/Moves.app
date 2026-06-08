@@ -1,9 +1,45 @@
 import SwiftUI
 
-/// Settings pane in the main window (INITIAL-PLAN §4.2, §6). Phase 4 owns
-/// working hours only — other settings (hotkey rebind, theme, export)
-/// land in Phase 6.
+/// Main-window Settings pane. Phase 4 shipped the working-hours editor;
+/// Phase 6 adds default alert offsets (§8.3), the menu-bar badge toggle,
+/// the capture-shortcut rebind, an onboarding-rerun affordance, and the
+/// SQLite + Markdown export buttons.
+///
+/// One vertical scroll with explicit sub-sections. The cards share a
+/// padded-rounded-rect background so the pane reads as several discrete
+/// settings groups without resorting to a SwiftUI `Form` (which on macOS
+/// is heavier than this pane needs).
 struct SettingsView: View {
+  var body: some View {
+    PaneShell(title: "Settings", subtitle: "Working hours · alerts · backup · onboarding") {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 18) {
+          card { WorkingHoursSection() }
+          card { AlertOffsetsSection() }
+          card { BadgeAndOnboardingSection() }
+          card { ExportSection() }
+        }
+        .padding(.vertical, 4)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    content()
+      .padding(20)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(.background.secondary)
+      )
+  }
+}
+
+/// Working-hours editor — pulled out of the old monolithic `SettingsView`
+/// so Phase 6's additions are siblings rather than appended to one giant
+/// pile. Behavior is unchanged from Phase 4.
+struct WorkingHoursSection: View {
   @Environment(AppStore.self) private var store
 
   @State private var days: Set<Int> = []
@@ -12,30 +48,21 @@ struct SettingsView: View {
   @State private var loaded = false
 
   var body: some View {
-    PaneShell(title: "Settings", subtitle: "Working hours · §6 visibility behavior") {
-      VStack(alignment: .leading, spacing: 16) {
-        weekdayPicker
-        timeRow
-        HStack {
-          Text(currentStateLine)
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-          Spacer()
-          Button("Save", action: save)
-            .buttonStyle(.borderedProminent)
-            .disabled(!hasChanges)
-        }
+    VStack(alignment: .leading, spacing: 12) {
+      sectionHeader("Working hours")
 
-        Divider()
-        Text("Other settings (hotkey rebind, export, alert reconciliation) land in Phase 6.")
-          .font(.system(size: 12))
-          .foregroundStyle(.tertiary)
+      weekdayPicker
+      timeRow
+
+      HStack {
+        Text(currentStateLine)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Button("Save working hours", action: save)
+          .buttonStyle(.borderedProminent)
+          .disabled(!hasChanges)
       }
-      .padding(20)
-      .background(
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(.background.secondary)
-      )
     }
     .onAppear(perform: prefillIfNeeded)
   }
@@ -43,10 +70,9 @@ struct SettingsView: View {
   private var weekdayPicker: some View {
     VStack(alignment: .leading, spacing: 6) {
       Text("Days")
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.tertiary)
-        .textCase(.uppercase)
-        .kerning(0.5)
+        .font(.caption)
+        .fontWeight(.medium)
+        .foregroundStyle(.secondary)
       HStack(spacing: 6) {
         ForEach(WorkingHoursWeekday.allCases, id: \.self) { day in
           let isOn = days.contains(day.rawValue)
@@ -54,7 +80,8 @@ struct SettingsView: View {
             if isOn { days.remove(day.rawValue) } else { days.insert(day.rawValue) }
           } label: {
             Text(day.shortLabel)
-              .font(.system(size: 12, weight: isOn ? .semibold : .regular))
+              .font(.callout)
+              .fontWeight(isOn ? .semibold : .regular)
               .foregroundStyle(isOn ? Color.white : Color.primary)
               .frame(minWidth: 38)
               .padding(.vertical, 6)
@@ -68,6 +95,7 @@ struct SettingsView: View {
               )
           }
           .buttonStyle(.plain)
+          .accessibilityLabel("\(day.fullLabel) \(isOn ? "selected" : "not selected")")
         }
       }
     }
@@ -77,19 +105,17 @@ struct SettingsView: View {
     HStack(spacing: 20) {
       VStack(alignment: .leading, spacing: 6) {
         Text("Start")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.tertiary)
-          .textCase(.uppercase)
-          .kerning(0.5)
+          .font(.caption)
+          .fontWeight(.medium)
+          .foregroundStyle(.secondary)
         DatePicker("", selection: $startDate, displayedComponents: .hourAndMinute)
           .labelsHidden()
       }
       VStack(alignment: .leading, spacing: 6) {
         Text("End")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.tertiary)
-          .textCase(.uppercase)
-          .kerning(0.5)
+          .font(.caption)
+          .fontWeight(.medium)
+          .foregroundStyle(.secondary)
         DatePicker("", selection: $endDate, displayedComponents: .hourAndMinute)
           .labelsHidden()
       }

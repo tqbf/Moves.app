@@ -2,8 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Moves runs unsandboxed: it reads/writes its SQLite store at a fixed
+         path under ~/Library/Application Support/Moves/ and writes user-chosen
+         export paths (NSSavePanel / NSOpenPanel). A sandboxed build would
+         force us to ship the SQLite file under the container's
+         application-group directory, which breaks the "open in DB Browser
+         for SQLite" backup story without a meaningful security gain (we
+         don't load plug-ins, don't run JIT, don't IPC). The hardened-runtime
+         + Developer ID + notarization triple is sufficient. -->
     <key>com.apple.security.app-sandbox</key>
     <false/>
+
+    <!-- The capture palette + KeyboardShortcuts dep depend on writing the
+         user's chosen capture chord to UserDefaults; nothing requires this
+         entitlement but we keep it for the user-selected-file dialogs we
+         use during export. Phase 6 introduces NSSavePanel + NSOpenPanel
+         flows so this remains live. -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
 </dict>

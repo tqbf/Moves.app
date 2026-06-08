@@ -76,12 +76,16 @@ struct MenuPopoverView: View {
   private var header: some View {
     HStack(alignment: .firstTextBaseline) {
       Text("Moves")
-        .font(.system(size: 13, weight: .semibold))
+        .font(.headline)
       Spacer()
-      if store.dueOrOverdueHardCount > 0 {
-        Text("•\(store.dueOrOverdueHardCount) due")
-          .font(.system(size: 11, weight: .medium))
+      // Phase 6: badge respects the user's render-time toggle. When
+      // disabled, the chip vanishes from both the popover and the menubar.
+      if store.renderedBadgeCount > 0 {
+        Text("•\(store.renderedBadgeCount) due")
+          .font(.caption)
+          .fontWeight(.medium)
           .foregroundStyle(.orange)
+          .accessibilityLabel("\(store.renderedBadgeCount) due or overdue")
       }
     }
     .padding(.horizontal, 14)

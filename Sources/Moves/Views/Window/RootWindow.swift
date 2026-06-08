@@ -14,6 +14,10 @@ struct RootWindow: View {
   @Environment(AppStore.self) private var store
   @Environment(\.openWindow) private var openWindow
   @State private var selection: SidebarDestination? = .available
+  /// Watch the onboarding presenter so the RootWindow can open the
+  /// onboarding window scene when the bootstrap flips the flag (or the
+  /// user clicks "Show onboarding again" in Settings).
+  @Bindable private var onboardingPresenter = OnboardingPresenter.shared
 
   var body: some View {
     NavigationSplitView {
@@ -32,6 +36,18 @@ struct RootWindow: View {
     }
     .navigationTitle("Moves")
     .task { await store.load() }
+    .onChange(of: onboardingPresenter.presentRequested) { _, requested in
+      if requested {
+        openWindow(id: PopoverWindowID.onboarding.rawValue)
+      }
+    }
+    .onAppear {
+      // If the bootstrap already flipped the flag before the window
+      // mounted, open the onboarding scene now.
+      if onboardingPresenter.presentRequested {
+        openWindow(id: PopoverWindowID.onboarding.rawValue)
+      }
+    }
   }
 
   // MARK: - Sidebar

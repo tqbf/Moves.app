@@ -15,7 +15,8 @@ struct PopoverSectionContainer<Content: View>: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       Text(title.uppercased())
-        .font(.system(size: 10, weight: .semibold))
+        .font(.caption2)
+        .fontWeight(.semibold)
         .foregroundStyle(.tertiary)
         .kerning(0.5)
 

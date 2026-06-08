@@ -85,6 +85,15 @@ struct MovesApp: App {
     .windowResizability(.contentSize)
     .defaultPosition(.center)
 
+    // Phase-6 onboarding modal. Hosts the OnboardingView and self-opens
+    // when `OnboardingPresenter.shared.presentRequested` flips to true.
+    Window("Welcome to Moves", id: PopoverWindowID.onboarding.rawValue) {
+      OnboardingHost()
+        .environment(store)
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
     MenuBarExtra {
       MenuPopoverView()
         .environment(store)
@@ -93,10 +102,17 @@ struct MovesApp: App {
       // show a simple badge". SwiftUI's MenuBarExtra label renders the icon
       // and any sibling Text views in the bar — but Label { Text } icon:
       // { Image } collapses to just the icon. An HStack keeps both visible.
+      //
+      // The badge count routes through `renderedBadgeCount` which honors
+      // the Phase-6 badge-enable/disable preference. The image always has
+      // an accessibility label so VoiceOver users can identify the
+      // menubar icon.
       HStack(spacing: 2) {
         Image(systemName: "figure.walk.motion")
-        if store.dueOrOverdueHardCount > 0 {
-          Text("•\(store.dueOrOverdueHardCount)")
+          .accessibilityLabel("Moves")
+        if store.renderedBadgeCount > 0 {
+          Text("•\(store.renderedBadgeCount)")
+            .accessibilityLabel("\(store.renderedBadgeCount) due or overdue")
         }
       }
     }
@@ -132,5 +148,18 @@ struct MovesApp: App {
     }
 
     await store.load()
+
+    // Phase 6 §17: on app launch, reconcile pending OS notifications with
+    // the persisted item state. Cancel orphans, schedule missing futures,
+    // mark fired any hard items whose due_at is already past.
+    await store.reconcileAlerts()
+
+    // Phase 6: first-launch onboarding. Triggered when no preferences row
+    // exists *or* the stored onboarded_version differs from current. The
+    // popover surfaces a sheet that walks through capture-hotkey
+    // registration and a first capture. Re-runnable from Settings.
+    if store.preferences.onboardedVersion != UserPreferences.currentOnboardingVersion {
+      OnboardingPresenter.shared.requestPresent()
+    }
   }
 }

@@ -209,6 +209,27 @@ actor Database {
     try query(sql, bind: bind, row: row).first
   }
 
+  // MARK: - Backup snapshot
+
+  /// `VACUUM INTO` the live database to `destinationPath`. Used by Phase-6
+  /// `ExportService` for the canonical SQLite-snapshot backup. The
+  /// destination must not already exist (SQLite refuses to overwrite); the
+  /// caller is responsible for clearing it first when overwriting.
+  ///
+  /// The path is bound rather than interpolated to keep paths with spaces /
+  /// quotes safe. WAL is flushed implicitly: `VACUUM INTO` writes a fresh
+  /// canonical-format database.
+  func snapshot(to destinationPath: String) throws {
+    guard let handle else { throw PersistenceError.openFailed("connection closed") }
+    let statement = try prepare(rawHandle: handle, sql: "VACUUM INTO ?;")
+    defer { sqlite3_finalize(statement) }
+    sqlite3_bind_text(statement, 1, destinationPath, -1, Database.transient)
+    let result = sqlite3_step(statement)
+    guard result == SQLITE_DONE else {
+      throw PersistenceError.stepFailed(String(cString: sqlite3_errmsg(handle)))
+    }
+  }
+
   // MARK: - Static helpers (used during init only)
 
   private static func exec(rawHandle: OpaquePointer, sql: String) throws {

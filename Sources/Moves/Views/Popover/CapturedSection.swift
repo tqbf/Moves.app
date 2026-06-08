@@ -18,7 +18,7 @@ struct CapturedSection: View {
       let rows = Array(store.capturedItems.prefix(Self.maxRows))
       if rows.isEmpty {
         Text("Nothing captured")
-          .font(.system(size: 13))
+          .font(.callout)
           .foregroundStyle(.secondary)
       } else {
         VStack(alignment: .leading, spacing: 2) {
@@ -27,7 +27,7 @@ struct CapturedSection: View {
           }
           if store.capturedItems.count > Self.maxRows {
             Text("+\(store.capturedItems.count - Self.maxRows) more in the main window")
-              .font(.system(size: 11))
+              .font(.caption)
               .foregroundStyle(.tertiary)
               .padding(.top, 2)
           }
@@ -43,18 +43,28 @@ private struct CapturedPopoverRow: View {
   var body: some View {
     HStack(spacing: 6) {
       Image(systemName: icon)
-        .font(.system(size: 10))
+        .font(.caption2)
         .foregroundStyle(iconColor)
         .frame(width: 12)
+        .accessibilityLabel(iconLabel)
       Text(item.title)
-        .font(.system(size: 12))
+        .font(.caption)
         .lineLimit(1)
       Spacer(minLength: 4)
       if let dueLabel {
         Text(dueLabel)
-          .font(.system(size: 11))
+          .font(.caption)
           .foregroundStyle(.tertiary)
       }
+    }
+  }
+
+  /// VoiceOver label for the icon describing the capture's interruption.
+  private var iconLabel: String {
+    switch item.interruptionKind {
+    case .hard: return "Hard reminder"
+    case .soft: return "Soft reminder"
+    case .none: return "Capture"
     }
   }
 

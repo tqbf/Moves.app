@@ -17,4 +17,7 @@ enum PopoverWindowID: String {
   /// so the user can drag a file from Finder onto it without the popover
   /// dismissing under them.
   case importMarkdown = "import-markdown"
+  /// Phase-6: first-launch onboarding modal. Window scene so the menubar
+  /// popover doesn't kill it on focus loss; re-runnable from Settings.
+  case onboarding = "onboarding"
 }

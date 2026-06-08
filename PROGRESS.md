@@ -2,6 +2,287 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 6: export + alert reconciliation + onboarding + notarization
+
+Phase 6 takes Moves from feature-complete to shippable. Backup/export
+(SQLite snapshot + Markdown bundle), launch-time alert reconciliation
+(§17), Settings completion (default alert offsets, badge toggle,
+capture-shortcut rebind), a 3-pane onboarding flow that ends with a real
+capture, an accessibility pass on icon-only buttons + Dynamic Type
+across the popover, and the notarization pipeline restored end-to-end.
+No new product features — polish-only, per the phase plan.
+
+What landed:
+
+- `Sources/Moves/Services/ExportService.swift` — backup/export root.
+  - **`exportSnapshot(to:)`** — `VACUUM INTO` via a new
+    `Database.snapshot(to:)` actor helper. Canonical backup; the
+    destination file is replaced if it already exists (NSSavePanel
+    already confirmed overwrite intent).
+  - **`exportMarkdownBundle(to:)`** — directory with one `.md` per
+    thread, one `captured.md` for orphan items (status = `.captured`,
+    no thread), and one `time-log.csv`. The per-thread shape is
+    deliberately the same shape `MarkdownImportService.parse` accepts:
+    YAML frontmatter (`title / kind / visibility`), one `## ` per
+    segment, `move: / date: / due: / estimate:` metadata lines under
+    each heading, then `- [ ] / - [x]` checklist items and any body
+    Markdown. Round-trip is asserted by `ExportServiceTests
+    .testMarkdownBundleRoundTripsWithImporter`.
+  - **`time-log.csv`** — `week_start, thread_title, segment_title,
+    rough_minutes`. Quoting handles titles with commas/quotes.
+- `Sources/Moves/Services/AlertReconciliation.swift` — pure-ish §17
+  service. The pure projection `plan(now:items:pendingAlertsByItem:
+  pendingIdentifiers:)` returns three buckets:
+  1. **Cancel** — pending OS notifications whose item is `.done`,
+     `.canceled`, soft (was hard at schedule time), missing, or has no
+     future `due_at` anymore.
+  2. **Schedule** — items with `interruption_kind = .hard`, `due_at >
+     now`, and no pending OS notification covering them.
+  3. **Mark fired** — hard items whose `due_at <= now` and have an
+     unfired `Alert` row. The OS notification is NOT re-fired — that
+     would surface stale banners hours/days late. Only the DB stamps.
+  Idempotent. `apply` does the OS cancellations + DB writes + missing
+  schedules via `ReminderScheduler.scheduleAtDue`. Reads the persisted
+  alert id via the existing `moves.item.<itemId>.alert.<alertId>`
+  notification identifier scheme.
+- `Sources/Moves/Views/Window/Settings/ExportSection.swift` — two
+  buttons: "Export SQLite snapshot…" (NSSavePanel) and "Export Markdown
+  bundle…" (NSOpenPanel → directory). Inline confirmation with the
+  written path; failures surface inline too. Default filename includes
+  a `YYYY-MM-DD-HHMM` timestamp so back-to-back exports don't clobber.
+- `Sources/Moves/Views/Window/Settings/AlertOffsetsSection.swift` —
+  the §8.3 default-offsets editor. Two chip rows (Reminders / Deadline
+  tasks) with an "Add offset" menu over the canonical buckets
+  (`0, 15m, 30m, 1h, 2h, 4h, morning of, 2d`). Save button is enabled
+  only on changes; the AppStore writer re-resolves the preferences
+  struct at write time (Phase-5 gate idiom: don't capture a stale
+  snapshot of `store.preferences`, mutate, write — instead resolve fresh
+  at click time so a concurrent badge-toggle save doesn't clobber the
+  offset edit).
+- `Sources/Moves/Views/Window/Settings/BadgeAndOnboardingSection.swift`
+  — "Show due/overdue badge" toggle (writes through
+  `AppStore.saveUserPreferences`), `KeyboardShortcuts.Recorder` for
+  the capture chord, and a "Show onboarding again" button that resets
+  the marker and calls `OnboardingPresenter.shared.requestPresent()`.
+- `Sources/Moves/Views/Onboarding/OnboardingView.swift` — three
+  panes max, in line with the §18 spec:
+  1. **What this app is for** — one-sentence pitch + a small mocked
+     popover preview ("Current · Ship Moves v1 · Next: revise
+     onboarding copy") so the user can see the menubar idiom before
+     they ever open the popover.
+  2. **Capture hotkey** — a live `KeyboardShortcuts.Recorder` bound to
+     `.capture`. Default ⌥Space; user can rebind or accept.
+  3. **Try a capture** — a real `TextField` that runs through
+     `AppStore.capture(...)` on Return. The "Done" button is disabled
+     until the user has captured one item, so finishing the flow ends
+     with a real row in the Captured list.
+  Reduce-motion is honored: when set, pane transitions become identity
+  and the "Continue" button doesn't animate the step swap. Skip /
+  Back / primary actions wired through `.keyboardShortcut(.defaultAction)`
+  / `.cancelAction` so Return/Esc work.
+- `Sources/Moves/Views/Onboarding/OnboardingPresenter.swift` +
+  `OnboardingHost.swift` — an `@Observable` singleton flag plus a
+  Window-scene host. RootWindow observes the flag and calls
+  `openWindow(id:)` when it flips to true. If SwiftUI restores the
+  onboarding scene without the flag set (cold-launch sheet ghost),
+  the host self-dismisses — same Phase-3 idiom as Stop/Switch/Park.
+- `Sources/Moves/Domain/UserPreferences.swift` — single value type for
+  alert offsets + badge toggle + onboarded version. JSON-stored under
+  the `user_preferences` settings key. `decodedJSON` is
+  forward-compatible: missing keys fall back to defaults so a future
+  release can add fields without breaking older DBs.
+
+AppStore additions:
+- `preferences: UserPreferences` (`@Observable`), loaded by `load()` via
+  new `loadUserPreferences()`, written via `saveUserPreferences(_:)`,
+  `markOnboardingComplete()`, `resetOnboarding()`.
+- `renderedBadgeCount: Int` — render-time check that returns 0 when
+  the badge toggle is off, the DB count otherwise. Routed through both
+  the menubar HStack and the popover header's `•N due` chip so they
+  always agree.
+- `exportService()` factory.
+- `reconcileAlerts(now:)` — fires after `load()` in the bootstrap so
+  the badge count + scheduled notifications are coherent before the
+  user sees the menubar.
+
+Accessibility pass:
+- **Icon-only buttons now carry `.accessibilityLabel`:**
+  - Menubar `figure.walk.motion` icon (label "Moves") + badge text
+    (label "N due or overdue").
+  - Popover header `•N due` chip (label "N due or overdue").
+  - Popover Available rows ("Switch to <title>. Next move: <move>.")
+    — was unlabeled accessibility-wise.
+  - Popover Upcoming + Captured row icons ("Hard reminder" / "Soft
+    reminder" / "Capture") — was an unlabeled `Image(systemName:)`.
+  - CapturedRow overflow `ellipsis.circle` ("Actions for <title>").
+  - Settings weekday-picker buttons ("Monday selected" / "Monday not
+    selected", routed through the new `WorkingHoursWeekday.fullLabel`).
+  - Alert-offset chip remove button ("Remove offset <label>") and the
+    "Add offset" menu ("Add reminders offset" / "Add deadline tasks
+    offset").
+- **Dynamic Type respected in the popover.** Every popover row + the
+  PopoverSectionContainer header moved from hard-coded
+  `.font(.system(size: N))` to semantic styles (`.caption`,
+  `.caption2`, `.callout`, `.body`, `.headline`). The menubar HStack
+  itself stays a small fixed metric — it can't grow without breaking
+  the system menubar strip layout — but the menubar's badge label has
+  an accessibility label so VoiceOver users hear the count.
+- **Reduce-motion honored** on the onboarding step transitions:
+  `@Environment(\.accessibilityReduceMotion)` toggles the `withAnimation`
+  block and the `.transition` mode. (The popover's other motion is
+  hover highlight + nothing else; nothing to gate.)
+
+Build pipeline (restored from `Makefile.example`):
+- **`make dist`** — `check-version → clean → release → sign →
+  zip-notary → notarize → staple → zip-release → checksum →
+  verify-release`. Output: `dist/Moves-X.Y.Z-macos.zip` + `.sha256`.
+- **`make notary-setup`** — interactive `xcrun notarytool
+  store-credentials`. Refuses to run from a non-tty (so agent shells
+  don't half-prompt and leave a broken keychain entry); prints what to
+  paste once you're in a real terminal.
+- **`make sign / notarize / staple / zip-release / verify-release /
+  github-release`** — split so a failed step can be re-run in
+  isolation. `verify-release` uses `spctl --assess` to confirm
+  Gatekeeper accepts the stapled bundle offline.
+- **`make print-version`** — diagnostic; shows the resolved
+  `VERSION`, whether it came from a git tag at HEAD, and whether the
+  `VERSION` file matches.
+- **`make check / test`** unchanged.
+- **`make clean`** now also clears `./dist/`.
+- Keychain profile renamed `moves-notary` (was `djroomba-notary` in
+  the template).
+
+Version source: a `VERSION` file at the repo root + git tag at HEAD.
+The `VERSION` file lets `make help / sign / print-version` work on a
+contributor's checkout without a tag, but `make check-version` (gating
+`make dist`) still demands an exact `vX.Y.Z` git tag at HEAD. If both
+are present and disagree, the git tag wins because that's what `dist`
+allows. Override either via `make dist VERSION=0.1.0` for one-off
+release-target debugging.
+
+Entitlements: still unsandboxed. Hardened runtime is enabled at sign
+time via `--options runtime`. The `user-selected.read-write`
+entitlement is preserved for the Phase-6 export NSSavePanel/NSOpenPanel
+flows. No new entitlements; `disable-library-validation` is
+deliberately NOT set — Moves doesn't load third-party dylibs.
+
+Tests (164 total, was 131):
+
+- `Tests/MovesTests/AlertReconciliationTests.swift` — 15 cases. The
+  pure `plan(...)` covers every §17 bucket transition: cancel for
+  done/canceled/missing/soft-after-the-fact items; leave live
+  hard-future items alone; schedule hard items with no pending request;
+  skip soft items; mark fired only when due_at <= now AND fired_at is
+  still nil; ignore alerts whose row is already fired (idempotency).
+  Plus identifier-parser tests (round-trip, foreign-prefix rejection,
+  malformed segment rejection) and two end-to-end reconcile tests
+  against a fake `UNUserNotificationCenterProtocol` backed by a real
+  on-disk DB.
+- `Tests/MovesTests/ExportServiceTests.swift` — 9 cases. SQLite
+  snapshot round-trip (open the snapshot as a fresh DB, assert threads
+  are present); snapshot overwrites existing files; Markdown bundle
+  emits one `.md` per thread plus `captured.md` + `time-log.csv`;
+  bundle round-trips with `MarkdownImportService` (parse the emitted
+  `.md`, assert the segments + items + frontmatter all match);
+  time-log CSV has a header row + one row per entry; CSV quoting
+  handles commas; slug helper for funny titles; CSV escape for
+  embedded quotes.
+- `Tests/MovesTests/UserPreferencesTests.swift` — 9 cases. JSON
+  encode/decode round-trip; missing-key fallback to defaults
+  (forward-compat); malformed JSON returns nil; defaults match the
+  Phase 6 plan contract (reminders `[0]`, deadline tasks
+  `[24*60, 60, 0]`, badge enabled, no onboarded version); offset-label
+  formatting; saving prefs through `AppStore` round-trips across a
+  relaunch (DOD-style); badge toggle hides `renderedBadgeCount` while
+  leaving `dueOrOverdueHardCount` intact; onboarding mark/reset.
+
+Phase 6 invariants enforced by code + tests:
+
+- **`AlertReconciliation` is idempotent.** Two reconcile passes
+  produce the same plan; the second pass on a clean state produces no
+  writes. Tested in `testPlanIsIdempotent` and
+  `testReconcileIsIdempotentEndToEnd`.
+- **DB is the source of truth.** Reconciliation never re-fires past
+  notifications; never overrides `Item.status` with anything; OS state
+  follows DB state, never the reverse. Encoded by the plan never
+  emitting `markFired` for items that aren't in the live `items` set.
+- **Badge toggle is render-time only.** The DB-side
+  `dueOrOverdueHardCount` is always live (it's a cheap COUNT query);
+  the popover header + menubar HStack route through
+  `renderedBadgeCount` which gates on the toggle. Tested in
+  `testBadgeToggleHidesRenderedCount`.
+- **Onboarding marker round-trips.** `markOnboardingComplete` ↔
+  `resetOnboarding` through the DB; the bootstrap re-checks
+  `preferences.onboardedVersion` against `UserPreferences
+  .currentOnboardingVersion` before requesting present, so a future
+  version bump can retrigger.
+- **Markdown export round-trips through the §9 importer for
+  regimented threads.** Asserted directly in
+  `testMarkdownBundleRoundTripsWithImporter` — no parser warnings,
+  segment count + titles + builtInMove + items all preserved.
+
+Decisions honored:
+- Export format: SQLite snapshot is canonical; Markdown bundle is the
+  human-readable variant. Both offered in Settings.
+- Reconciliation policy: trust the DB. Cancel orphan scheduled
+  notifications. Don't re-fire past banners.
+- Onboarding trigger: first launch only (via the settings
+  `onboarded_version` field on `UserPreferences`). Re-runnable from
+  Settings.
+- Version source: `VERSION` file at repo root for dev affordances; git
+  tag at HEAD required for `make dist`.
+- Settings layout: one vertical pane with sub-section cards (Working
+  hours, Alert offsets, Menu bar & notifications, Backup & export).
+  A SwiftUI `Form` would be heavier than this pane needs.
+
+`make check` + `make test` green (164/164).
+
+Heads-up for future agents:
+
+- **`AlertReconciliation.plan(...)` is the pure surface.** Anything
+  that wants to predict what reconcile will do (a future debug pane?
+  a v2 reconcile dry-run?) should call `plan` and inspect; only
+  `reconcile()` performs IO.
+- **`OnboardingPresenter.shared` is a singleton observable flag.**
+  RootWindow observes it; `MovesApp.bootstrap` flips it; the
+  OnboardingHost self-dismisses if SwiftUI restores the scene without
+  the flag set. If a future settings refactor moves to multiple
+  observers, keep them all reading the same singleton.
+- **`UserPreferences.decodedJSON` is forward-compat by design.** Adding
+  a new key in the future doesn't need a migration: the partial-decode
+  path fills missing keys from defaults. Removing or renaming a key
+  needs explicit handling.
+- **Markdown export's `unsegmented items` synthetic H2** —
+  thread-attached items with no `segment_id` round-trip as a synthetic
+  segment titled "Unsegmented items". Future work could promote these
+  to thread-level items via a frontmatter `items:` block; the current
+  shape is the conservative one (parser accepts it as a segment with
+  the right name and items).
+
+### Punted to v2
+
+- **Onboarding-replay version bumps.** The mechanism is in place
+  (compare `preferences.onboardedVersion` against
+  `UserPreferences.currentOnboardingVersion`), but there's no
+  "what's new in this version" string surface yet. Phase plan's open
+  question pointed at a `CHANGELOG.md` parsed on demand; v2 can ship
+  the changelog parser and surface it as a fourth onboarding pane on
+  upgrade.
+- **Apply alert offsets to existing items.** The Settings editor saves
+  new defaults but doesn't retroactively reschedule existing items —
+  doing so honestly requires deciding whether the user wanted "next
+  capture forward" or "everything I have". v1 lock-in: future captures
+  only.
+- **Granular `morning of` clock time.** "Morning of" maps to 24h
+  before due_at, which approximates "morning of" when the deadline is
+  during normal waking hours but breaks for late-night deadlines.
+  Promoting this to a "deliver at HH:MM the previous day" config is a
+  v2 concern.
+- **Bundle restore.** `make dist` produces a snapshot the user can
+  replace `moves.sqlite3` with; there's no in-app "restore from
+  backup" affordance. A v2 settings button could close the connection,
+  swap the file, reopen.
+
 ## 2026-06-08 — Phase 5 gate (swiftui-pro, partial): autosave staleness + formatter caching
 
 swiftui-pro code-level gate caught two real findings on Phase 5's new

@@ -26,7 +26,7 @@ struct AvailableSection: View {
       let groups = grouped()
       if groups.normal.isEmpty, groups.deemphasized.isEmpty {
         Text("No re-entry points")
-          .font(.system(size: 13))
+          .font(.callout)
           .foregroundStyle(.secondary)
       } else {
         VStack(alignment: .leading, spacing: 2) {
@@ -37,7 +37,8 @@ struct AvailableSection: View {
 
         if !groups.deemphasized.isEmpty {
           Text("De-emphasized during working hours")
-            .font(.system(size: 10, weight: .medium))
+            .font(.caption2)
+            .fontWeight(.medium)
             .foregroundStyle(.tertiary)
             .padding(.top, 6)
           VStack(alignment: .leading, spacing: 2) {
@@ -98,11 +99,12 @@ private struct AvailableRow: View {
     Button(action: action) {
       VStack(alignment: .leading, spacing: 1) {
         Text(item.thread.title)
-          .font(.system(size: 13, weight: deemphasized ? .regular : .medium))
+          .font(.callout)
+          .fontWeight(deemphasized ? .regular : .medium)
           .foregroundStyle(deemphasized ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
           .lineLimit(1)
         Text(item.move.text)
-          .font(.system(size: 11))
+          .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
@@ -112,6 +114,7 @@ private struct AvailableRow: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(AvailableRowButtonStyle())
+    .accessibilityLabel("Switch to \(item.thread.title). Next move: \(item.move.text).")
   }
 }
 

@@ -19,15 +19,16 @@ struct UpcomingSection: View {
       if let next = headroom.nextHard {
         VStack(alignment: .leading, spacing: 4) {
           Text("Next hard: \(next.title)")
-            .font(.system(size: 13, weight: .medium))
+            .font(.callout)
+            .fontWeight(.medium)
             .lineLimit(1)
           Text(runwayLabel)
-            .font(.system(size: 11))
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
       } else {
         Text("Nothing hard ahead")
-          .font(.system(size: 13))
+          .font(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -80,16 +81,17 @@ private struct UpcomingRow: View {
   var body: some View {
     HStack(spacing: 6) {
       Image(systemName: item.interruptionKind == .hard ? "bell.fill" : "calendar")
-        .font(.system(size: 10))
+        .font(.caption2)
         .foregroundStyle(item.interruptionKind == .hard ? .orange : .secondary)
         .frame(width: 12)
+        .accessibilityLabel(item.interruptionKind == .hard ? "Hard reminder" : "Soft reminder")
       Text(item.title)
-        .font(.system(size: 12))
+        .font(.caption)
         .lineLimit(1)
       Spacer(minLength: 4)
       if let due = item.dueAt {
         Text(Self.formatter.string(from: Date(timeIntervalSince1970: TimeInterval(due))))
-          .font(.system(size: 11))
+          .font(.caption)
           .foregroundStyle(.tertiary)
       }
     }

@@ -94,6 +94,42 @@ struct ItemRepository: Sendable {
     return count ?? 0
   }
 
+  /// All items in `(captured, open)` with a non-nil `due_at`, regardless of
+  /// interruption kind. Drives Phase-6 launch-time `AlertReconciliation`,
+  /// which schedules missing notifications for futures and stamps fired_at
+  /// for hard items whose due_at has already passed.
+  func allOpenOrCapturedWithDueAt() async throws -> [Item] {
+    try await db.query(
+      """
+      \(Self.selectColumns)
+      FROM items
+      WHERE due_at IS NOT NULL
+        AND status IN (?, ?);
+      """,
+      bind: { stmt in
+        stmt.bindText(ItemStatus.captured.rawValue, at: 1)
+        stmt.bindText(ItemStatus.open.rawValue, at: 2)
+      },
+      row: Self.read
+    )
+  }
+
+  /// All items used by Phase-6 `ExportService.exportMarkdownBundle` to emit
+  /// the `captured.md` file: items whose `thread_id` is NULL and whose
+  /// status is `.captured` (matches the §13 inbox definition).
+  func orphanCaptured() async throws -> [Item] {
+    try await db.query(
+      """
+      \(Self.selectColumns)
+      FROM items
+      WHERE thread_id IS NULL AND status = ?
+      ORDER BY created_at ASC;
+      """,
+      bind: { $0.bindText(ItemStatus.captured.rawValue, at: 1) },
+      row: Self.read
+    )
+  }
+
   func find(id: String) async throws -> Item? {
     try await db.queryOne(
       """

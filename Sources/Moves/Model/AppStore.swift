@@ -56,6 +56,11 @@ final class AppStore {
   /// to `.default` until `loadWorkingHours()` resolves a stored row.
   private(set) var workingHours: WorkingHours = .default
 
+  /// Cached user preferences from the `settings` table (alert offsets,
+  /// badge enable/disable, onboarding marker). Defaults to `.default`
+  /// until `loadUserPreferences()` resolves a stored row.
+  private(set) var preferences: UserPreferences = .default
+
   /// True if the most recent `isWorkTimeTick` call put us inside the
   /// working-hours window. Driven by a `TimelineView` in the main window
   /// (and recomputed on settings save). The popover's de-emphasis section
@@ -91,6 +96,8 @@ final class AppStore {
 
   /// Settings-table key for the working-hours JSON blob.
   static let workingHoursSettingsKey = "working_hours"
+  /// Settings-table key for the user-preferences JSON blob (Phase 6).
+  static let userPreferencesSettingsKey = "user_preferences"
 
   /// Designated initializer. Accepts an explicit path so tests can point
   /// at a temp directory; production constructs from `Database.defaultURL()`.
@@ -126,6 +133,7 @@ final class AppStore {
 
   func load() async {
     await loadWorkingHours()
+    await loadUserPreferences()
     await reloadThreads()
     await reloadCaptured()
     await reloadUpcoming()
@@ -253,6 +261,92 @@ final class AppStore {
   /// Service.isInside` is pure) — call freely from a `TimelineView`.
   func refreshWorkTime(now: Date) {
     isWorkTime = WorkingHoursService.isInside(date: now, hours: workingHours)
+  }
+
+  // MARK: - User preferences (Phase 6)
+
+  /// Read user-preferences JSON from `settings`. Falls back to `.default`
+  /// on missing-or-malformed rows.
+  func loadUserPreferences() async {
+    do {
+      let raw = try await settingsRepository.get(Self.userPreferencesSettingsKey)
+      if let raw, let parsed = UserPreferences.decodedJSON(raw) {
+        preferences = parsed
+      } else {
+        preferences = .default
+      }
+    } catch {
+      loadError = "Preferences load failed: \(error)"
+      preferences = .default
+    }
+  }
+
+  /// Persist `preferences` and update the cache. The badge toggle takes
+  /// effect on the next render; the alert-offsets editor takes effect on
+  /// the next capture (existing items aren't retro-rescheduled in v1).
+  func saveUserPreferences(_ prefs: UserPreferences) async {
+    do {
+      let json = try prefs.encodedJSON()
+      try await settingsRepository.set(Self.userPreferencesSettingsKey, value: json)
+      preferences = prefs
+    } catch {
+      loadError = "Preferences save failed: \(error)"
+    }
+  }
+
+  /// Mark onboarding as complete at the current version. Idempotent.
+  func markOnboardingComplete() async {
+    var copy = preferences
+    copy.onboardedVersion = UserPreferences.currentOnboardingVersion
+    await saveUserPreferences(copy)
+  }
+
+  /// Clear the onboarding flag so the user can re-run the flow. Used by
+  /// the Settings "Show onboarding again" button.
+  func resetOnboarding() async {
+    var copy = preferences
+    copy.onboardedVersion = nil
+    await saveUserPreferences(copy)
+  }
+
+  /// Render-time check: badge count to show in the menubar / popover.
+  /// Returns 0 when the user disabled the badge — the underlying DB count
+  /// is still maintained for cheap future re-enablement.
+  var renderedBadgeCount: Int {
+    preferences.badgeEnabled ? dueOrOverdueHardCount : 0
+  }
+
+  // MARK: - Export (Phase 6)
+
+  /// Construct an `ExportService` against the live database + repositories.
+  /// Cheap — no IO until a method is called.
+  func exportService() -> ExportService {
+    ExportService(
+      database: database,
+      threadRepository: threadRepository,
+      segmentRepository: segmentRepository,
+      itemRepository: itemRepository,
+      timeLogRepository: timeLogRepository
+    )
+  }
+
+  // MARK: - Alert reconciliation (Phase 6, §17)
+
+  /// Launch-time reconciliation. Cancels OS notifications whose items are
+  /// done/canceled/missing, schedules missing OS notifications for hard
+  /// future items, and stamps `Alert.fired_at` for hard past-due items
+  /// without re-firing the OS. No-op when `reminderScheduler` is nil
+  /// (tests / SwiftPM xctest host).
+  func reconcileAlerts(now: Date = Date()) async {
+    guard let reminderScheduler else { return }
+    let reconciler = AlertReconciliation(
+      itemRepository: itemRepository,
+      alertRepository: alertRepository,
+      reminderScheduler: reminderScheduler,
+      center: UNUserNotificationCenter.current()
+    )
+    await reconciler.reconcile(now: now)
+    await refreshDueCount()
   }
 
   // MARK: - Capture (Phase 2)

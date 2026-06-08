@@ -110,4 +110,18 @@ enum WorkingHoursWeekday: Int, CaseIterable, Sendable {
     case .sunday: return "Sun"
     }
   }
+
+  /// Full label used by accessibility readouts so VoiceOver users hear
+  /// the full weekday name, not the abbreviation.
+  var fullLabel: String {
+    switch self {
+    case .monday: return "Monday"
+    case .tuesday: return "Tuesday"
+    case .wednesday: return "Wednesday"
+    case .thursday: return "Thursday"
+    case .friday: return "Friday"
+    case .saturday: return "Saturday"
+    case .sunday: return "Sunday"
+    }
+  }
 }

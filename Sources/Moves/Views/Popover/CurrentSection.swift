@@ -38,19 +38,20 @@ struct CurrentSection: View {
   private func activeContent(for thread: Thread) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(thread.title)
-        .font(.system(size: 14, weight: .semibold))
+        .font(.callout)
+        .fontWeight(.semibold)
         .lineLimit(1)
 
       if let segment = currentSegment {
         Text(segment.title)
-          .font(.system(size: 12))
+          .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
 
       if !thread.breadcrumb.isEmpty {
         Text("Next: \(thread.breadcrumb)")
-          .font(.system(size: 12))
+          .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
@@ -63,7 +64,7 @@ struct CurrentSection: View {
 
   private var idleContent: some View {
     Text("Not working on anything")
-      .font(.system(size: 13))
+      .font(.callout)
       .foregroundStyle(.secondary)
   }
 
@@ -91,7 +92,7 @@ struct CurrentSection: View {
       // unavailable". A muted hint communicates the same affordance
       // without the dead-button pattern.
       Text("Or click a thread in Available to switch")
-        .font(.system(size: 11))
+        .font(.caption)
         .foregroundStyle(.tertiary)
     }
   }
