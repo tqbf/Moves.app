@@ -9,7 +9,7 @@ struct AlertRepository: Sendable {
 
   func forItem(_ itemId: String) async throws -> [Alert] {
     try await db.query(
-      "SELECT id, item_id, offset_minutes, fired_at FROM alerts WHERE item_id = ? ORDER BY offset_minutes ASC;",
+      "\(Self.selectColumns) FROM alerts WHERE item_id = ? ORDER BY offset_minutes ASC;",
       bind: { $0.bindText(itemId, at: 1) },
       row: Self.read
     )
@@ -17,7 +17,7 @@ struct AlertRepository: Sendable {
 
   func pending() async throws -> [Alert] {
     try await db.query(
-      "SELECT id, item_id, offset_minutes, fired_at FROM alerts WHERE fired_at IS NULL;",
+      "\(Self.selectColumns) FROM alerts WHERE fired_at IS NULL;",
       row: Self.read
     )
   }
@@ -45,6 +45,10 @@ struct AlertRepository: Sendable {
       stmt.bindText(id, at: 1)
     }
   }
+
+  // MARK: - Row mapping
+
+  private static let selectColumns = "SELECT id, item_id, offset_minutes, fired_at"
 
   static func read(_ s: Statement) throws -> Alert {
     Alert(

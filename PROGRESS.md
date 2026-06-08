@@ -2,6 +2,35 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 1 gate (toms-laws): A+B applied
+
+Reviewed Phase 1 against Thomas' Laws. Three real findings, one drop. Applied
+two (A, B); deferred C pending intent decision.
+
+- **A — column lists collapsed to one per repo.** Added `private static let
+  selectColumns` to `Thread/Segment/Alert/TimeLog` repositories; `Item`
+  already had it. Every SELECT now interpolates the constant, so the column
+  list and the indexed `read(_:)` mapper move together. Law 12 (DRY),
+  Law 5 (loose SELECT-order/index coupling). Falsifiable: each repo has
+  exactly one `SELECT` literal (Settings has 2 by design — two KV shapes).
+- **B — enum raw values bound instead of literal status strings.**
+  `ItemRepository.openForThread / captured / upcomingHard` now bind
+  `ItemStatus.x.rawValue` / `InterruptionKind.hard.rawValue` rather than
+  hard-coding `'open' / 'captured' / 'hard'` in SQL. Renames of those
+  cases now become compile errors instead of silent SQL drift. Law 12.
+  Falsifiable: `grep -E "status = '|status IN \('" repos/` returns 0.
+- **C (deferred) — trap on Database open failure; delete Optional repo
+  state from AppStore.** Would shrink AppStore by ~14 lines (7 `?`
+  decls + ~7 `guard let` clauses) and eliminate dead `loadError` paths.
+  Skipped: changes failure semantics (currently soft-fails to nil repos);
+  intentional design call to make before Phase 4 surfaces real settings UI.
+  Reopen when Phase 4 settings work needs an explicit "DB broken" surface.
+- **Dropped:** doc-only Foundation.Thread shadowing note. Not falsifiable;
+  already covered in the Phase 1 heads-up.
+
+`make check` + `make test` green (15/15) after A+B. App boots clean on a
+fresh DB, sidebar/detail still drive threads end-to-end.
+
 ## 2026-06-08 — Phase 1: domain & persistence
 
 Real domain in place. The hello-world `Move` model is gone; the SQLite

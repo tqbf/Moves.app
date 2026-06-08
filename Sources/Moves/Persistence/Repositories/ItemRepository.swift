@@ -27,10 +27,13 @@ struct ItemRepository: Sendable {
       """
       \(Self.selectColumns)
       FROM items
-      WHERE thread_id = ? AND status = 'open'
+      WHERE thread_id = ? AND status = ?
       ORDER BY created_at ASC;
       """,
-      bind: { $0.bindText(threadId, at: 1) },
+      bind: { stmt in
+        stmt.bindText(threadId, at: 1)
+        stmt.bindText(ItemStatus.open.rawValue, at: 2)
+      },
       row: Self.read
     )
   }
@@ -40,9 +43,10 @@ struct ItemRepository: Sendable {
       """
       \(Self.selectColumns)
       FROM items
-      WHERE status = 'captured'
+      WHERE status = ?
       ORDER BY created_at DESC;
       """,
+      bind: { $0.bindText(ItemStatus.captured.rawValue, at: 1) },
       row: Self.read
     )
   }
@@ -53,12 +57,17 @@ struct ItemRepository: Sendable {
       \(Self.selectColumns)
       FROM items
       WHERE due_at IS NOT NULL
-        AND interruption_kind = 'hard'
-        AND status IN ('captured', 'open')
+        AND interruption_kind = ?
+        AND status IN (?, ?)
         AND due_at >= ?
       ORDER BY due_at ASC;
       """,
-      bind: { $0.bindInt64(now, at: 1) },
+      bind: { stmt in
+        stmt.bindText(InterruptionKind.hard.rawValue, at: 1)
+        stmt.bindText(ItemStatus.captured.rawValue, at: 2)
+        stmt.bindText(ItemStatus.open.rawValue, at: 3)
+        stmt.bindInt64(now, at: 4)
+      },
       row: Self.read
     )
   }

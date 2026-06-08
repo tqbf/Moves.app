@@ -10,7 +10,7 @@ struct TimeLogRepository: Sendable {
   func forWeek(_ weekStart: String) async throws -> [TimeLogEntry] {
     try await db.query(
       """
-      SELECT id, thread_id, segment_id, week_start, rough_minutes, created_at
+      \(Self.selectColumns)
       FROM time_log
       WHERE week_start = ?
       ORDER BY created_at ASC;
@@ -23,7 +23,7 @@ struct TimeLogRepository: Sendable {
   func forThread(_ threadId: String) async throws -> [TimeLogEntry] {
     try await db.query(
       """
-      SELECT id, thread_id, segment_id, week_start, rough_minutes, created_at
+      \(Self.selectColumns)
       FROM time_log
       WHERE thread_id = ?
       ORDER BY created_at ASC;
@@ -54,6 +54,12 @@ struct TimeLogRepository: Sendable {
       stmt.bindText(id, at: 1)
     }
   }
+
+  // MARK: - Row mapping
+
+  private static let selectColumns = """
+    SELECT id, thread_id, segment_id, week_start, rough_minutes, created_at
+    """
 
   static func read(_ s: Statement) throws -> TimeLogEntry {
     TimeLogEntry(

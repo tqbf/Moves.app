@@ -12,8 +12,7 @@ struct ThreadRepository: Sendable {
   func all() async throws -> [Thread] {
     try await db.query(
       """
-      SELECT id, title, status, kind, visibility, breadcrumb, detail_markdown,
-             created_at, updated_at, last_touched_at
+      \(Self.selectColumns)
       FROM threads
       ORDER BY (last_touched_at IS NULL), last_touched_at DESC, created_at DESC;
       """,
@@ -24,8 +23,7 @@ struct ThreadRepository: Sendable {
   func withStatus(_ status: ThreadStatus) async throws -> [Thread] {
     try await db.query(
       """
-      SELECT id, title, status, kind, visibility, breadcrumb, detail_markdown,
-             created_at, updated_at, last_touched_at
+      \(Self.selectColumns)
       FROM threads
       WHERE status = ?
       ORDER BY (last_touched_at IS NULL), last_touched_at DESC, created_at DESC;
@@ -38,8 +36,7 @@ struct ThreadRepository: Sendable {
   func find(id: String) async throws -> Thread? {
     try await db.queryOne(
       """
-      SELECT id, title, status, kind, visibility, breadcrumb, detail_markdown,
-             created_at, updated_at, last_touched_at
+      \(Self.selectColumns)
       FROM threads
       WHERE id = ?;
       """,
@@ -106,6 +103,11 @@ struct ThreadRepository: Sendable {
   }
 
   // MARK: - Row mapping
+
+  private static let selectColumns = """
+    SELECT id, title, status, kind, visibility, breadcrumb, detail_markdown,
+           created_at, updated_at, last_touched_at
+    """
 
   static func read(_ s: Statement) throws -> Thread {
     let statusRaw = s.text(at: 2)

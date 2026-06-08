@@ -12,8 +12,7 @@ struct SegmentRepository: Sendable {
   func forThread(_ threadId: String) async throws -> [Segment] {
     try await db.query(
       """
-      SELECT id, thread_id, title, order_index, body_markdown, built_in_move,
-             status, scheduled_at, due_at, estimate_minutes, created_at, updated_at
+      \(Self.selectColumns)
       FROM segments
       WHERE thread_id = ?
       ORDER BY order_index ASC;
@@ -26,8 +25,7 @@ struct SegmentRepository: Sendable {
   func find(id: String) async throws -> Segment? {
     try await db.queryOne(
       """
-      SELECT id, thread_id, title, order_index, body_markdown, built_in_move,
-             status, scheduled_at, due_at, estimate_minutes, created_at, updated_at
+      \(Self.selectColumns)
       FROM segments
       WHERE id = ?;
       """,
@@ -98,6 +96,11 @@ struct SegmentRepository: Sendable {
   }
 
   // MARK: - Row mapping
+
+  private static let selectColumns = """
+    SELECT id, thread_id, title, order_index, body_markdown, built_in_move,
+           status, scheduled_at, due_at, estimate_minutes, created_at, updated_at
+    """
 
   static func read(_ s: Statement) throws -> Segment {
     let statusRaw = s.text(at: 6)
