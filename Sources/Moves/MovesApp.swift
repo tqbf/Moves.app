@@ -1,3 +1,4 @@
+import CoreImage
 import KeyboardShortcuts
 import SwiftUI
 import UserNotifications
@@ -24,16 +25,51 @@ struct MovesApp: App {
   @State private var capturePalette: CapturePaletteController?
   @State private var notificationDelegate: NotificationDelegate?
 
-  /// BLACK CHESS KNIGHT (U+265E) rendered through NSAttributedString into
-  /// a template NSImage. The system tints templates for menu-bar context
-  /// automatically (white in dark menu bars, black in light), and a
-  /// rendered-image path gets us a thicker, more legible glyph than
-  /// SwiftUI's `Text("♞").font(.system(weight: .black))` — chess piece
-  /// glyphs in San Francisco are weight-invariant.
+  /// Menu-bar knight glyph. Loads `logo.png` from Resources/, runs
+  /// CIMaskToAlpha to convert its white background to transparent (the
+  /// silhouette becomes the visible ink, everything else is alpha), and
+  /// marks the result as a template image for automatic light/dark
+  /// tinting.
+  ///
+  /// Falls back to a U+265E NSAttributedString render if the PNG can't
+  /// be loaded (e.g. running tests without Resources/) so the menu-bar
+  /// icon still draws.
   fileprivate static let knightTemplate: NSImage = {
+    makeLogoTemplate(pointSize: 18) ?? legacyKnightTemplate(pointSize: 18)
+  }()
+
+  /// Load `logo.png` from Resources/, invert it (so the silhouette
+  /// becomes the bright channel), then run CIMaskToAlpha so the new
+  /// "bright = opaque" mapping makes the silhouette opaque and the
+  /// original white background transparent. The output color isn't
+  /// relevant — `isTemplate = true` tells macOS to ignore color and
+  /// fill the alpha with the menubar tint.
+  ///
+  /// Returns `nil` if anything fails; the caller falls back to the
+  /// legacy glyph render.
+  private static func makeLogoTemplate(pointSize: CGFloat) -> NSImage? {
+    guard let url = Bundle.main.url(forResource: "logo", withExtension: "png"),
+          let raw = NSImage(contentsOf: url),
+          let cg = raw.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    else { return nil }
+    let ci = CIImage(cgImage: cg)
+    guard
+      let inverted = CIFilter(name: "CIColorInvert", parameters: [kCIInputImageKey: ci])?.outputImage,
+      let masked = CIFilter(name: "CIMaskToAlpha", parameters: [kCIInputImageKey: inverted])?.outputImage,
+      let cgMasked = CIContext().createCGImage(masked, from: masked.extent)
+    else { return nil }
+    let aspect = CGFloat(cgMasked.width) / max(CGFloat(cgMasked.height), 1)
+    let size = NSSize(width: pointSize * aspect, height: pointSize)
+    let image = NSImage(cgImage: cgMasked, size: size)
+    image.isTemplate = true
+    return image
+  }
+
+  /// Original U+265E render — kept as a fallback for when logo.png isn't
+  /// bundled (running tests, partial build, etc.).
+  private static func legacyKnightTemplate(pointSize: CGFloat) -> NSImage {
     let glyph = "\u{265E}"
-    let pt: CGFloat = 18
-    let font = NSFont.systemFont(ofSize: pt, weight: .black)
+    let font = NSFont.systemFont(ofSize: pointSize, weight: .black)
     let attrs: [NSAttributedString.Key: Any] = [
       .font: font,
       .foregroundColor: NSColor.black,
@@ -47,7 +83,7 @@ struct MovesApp: App {
     image.unlockFocus()
     image.isTemplate = true
     return image
-  }()
+  }
 
   init() {
     // SwiftPM (Swift 6.3) generates `Bundle.module` as
