@@ -87,6 +87,16 @@ struct MovesApp: App {
     }
     .defaultSize(width: 980, height: 640)
     .commands {
+      // View → "Back to Threads" (Cmd-[). The standard macOS "back"
+      // convention used by Safari, Mail, Finder, Xcode. We pull the
+      // selection-pop action off the focused-scene bus (see
+      // `BackNavigation.swift`); RootWindow publishes it only while a
+      // `.thread(_)` is selected, so the menu item auto-disables on
+      // every other top-level destination — siblings of `.threadsList`,
+      // not children.
+      CommandGroup(after: .sidebar) {
+        BackToThreadsCommand()
+      }
       CommandGroup(replacing: .newItem) {
         Button("New Thread") {
           // Cmd-N routes to the Threads pane's inline "New thread…" field
