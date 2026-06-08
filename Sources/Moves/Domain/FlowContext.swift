@@ -13,4 +13,8 @@ enum FlowContext: Hashable, Sendable {
   case stop(threadId: String)
   case `switch`(fromThreadId: String, toThreadId: String)
   case park(threadId: String)
+  /// Phase-5 segment-completion sheet (§5.5). The sheet logs rough time
+  /// against `(threadId, segmentId)` and advances to the next pending
+  /// segment in the same thread.
+  case completeSegment(threadId: String, segmentId: String)
 }

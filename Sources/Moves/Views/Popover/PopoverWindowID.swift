@@ -9,4 +9,12 @@ enum PopoverWindowID: String {
   case park = "flow-park"
   case parkingLot = "parking-lot"
   case main = "main"
+  /// Phase-5: explicit segment-completion sheet (§5.5). Hosted as its own
+  /// Window for the same reason as Stop/Switch/Park — the popover
+  /// auto-dismisses on focus loss and would kill a SwiftUI `.sheet`.
+  case completeSegment = "flow-complete-segment"
+  /// Phase-5: Markdown import preview sheet (§9). Hosted as its own Window
+  /// so the user can drag a file from Finder onto it without the popover
+  /// dismissing under them.
+  case importMarkdown = "import-markdown"
 }

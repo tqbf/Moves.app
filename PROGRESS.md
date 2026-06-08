@@ -2,7 +2,203 @@
 
 Newest first.
 
-## 2026-06-08 — Phase 4 gate: Markdown autosave + Available badge filter
+## 2026-06-08 — Phase 5: regimented threads + segment lifecycle + Markdown import + weekly time log
+
+Phase 5 makes regimented threads first-class: ordered segment lifecycle
+with explicit completion (§5.5), deterministic Markdown import (§9), and
+a §14 weekly rough-time view. The Phase-4 thread detail now hosts a
+SegmentsPanel for regimented threads; CompleteSegmentSheet runs as its
+own Window scene for the same reason Stop/Switch/Park do.
+
+What landed:
+
+- `Sources/Moves/Services/MarkdownImportService.swift` — §9 parser, exactly
+  as specified. Handles:
+  - YAML frontmatter (`---` … `---`) with supported keys
+    `title / kind / visibility / default_estimate_minutes`; unsupported
+    keys are dropped with a warning. Tiny built-in YAML — not Yams.
+  - `## ` H2 → segment boundary; `### ` not promoted.
+  - `key: value` metadata for `date / due / estimate / move` — recognized
+    *anywhere* before the first checklist item / non-meta body. The §9
+    example places `move:` after a blank line, which strict "metadata
+    ends at first blank line" would have rejected; we honor both forms.
+    Unsupported meta keys near the heading warn.
+  - `- [ ] …` and `- [x] …` checklist items → `Item.task` (open or done).
+  - Residual non-meta non-checklist content → `Segment.bodyMarkdown`.
+  - First segment becomes `.active`; the rest stay `.pending` (§9 rule 9).
+  - Content before the first H2 is silently dropped (it belongs to neither
+    frontmatter nor any segment).
+  - Date formats: `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, UTC.
+- `Sources/Moves/Services/TimeLogService.swift` — pure projections:
+  - `weekStart(for: Date) -> String` — ISO Monday, `YYYY-MM-DD`. Uses a
+    shared `Calendar.iso8601Monday` so the writer (`AppStore`) and
+    reader (`weeklyView`) agree on the bucket key.
+  - `aggregate(entries:) -> [ThreadAggregate]` — sums minutes per thread,
+    sorted by descending total (ties on threadId ASC for stability).
+  - `roughBucketLabel(_:) -> String` — "~30m" / "~1h" / "~1h 30m". Rounds
+    up to the nearest 15 inside the under-hour bucket so 20m reads as
+    "~30m" not "~15m" (matches the §14 chip semantics).
+- `Sources/Moves/Domain/{ImportPreview,WeeklySummary}.swift` — value types
+  that flow between service and view.
+- `Sources/Moves/Views/Window/ThreadDetail/SegmentsPanel.swift` — the §3
+  segment list inside the thread detail. Active segment is highlighted
+  (accent-tinted card) with the inline `SegmentDetail` editor embedded;
+  pending segments are dimmed; done + skipped collapse under a
+  "Show N completed" disclosure. Per-row overflow menu carries "Make
+  active" and "Skip"; "Mark Done" on the active row stages
+  `FlowContext.completeSegment` and opens the CompleteSegmentSheet.
+  Inline "New segment title…" field adds a pending row at the end.
+- `Sources/Moves/Views/Window/ThreadDetail/SegmentDetail.swift` — inline
+  editor for the active segment: built-in move (TextField, autosave on
+  600ms debounce) + body Markdown (`MarkdownEditorView`, autosave on
+  600ms debounce) + read-only metadata line (scheduled / due / estimate).
+  Matches the Phase-4 notes autosave idiom — no Save button to push off-
+  screen by the editor's expanding height.
+- `Sources/Moves/Views/Flows/CompleteSegmentSheet.swift` — §5.5 sheet.
+  Title shows the segment; one `RoughTimePicker`; no breadcrumb. On
+  confirm: marks the active segment done, logs `TimeLogEntry` attributed
+  to (thread, segment), advances the next pending segment to `.active`.
+  Self-dismisses if `pendingFlow` doesn't match (Phase-3 gate idiom for
+  Window scenes restored without a matching state).
+- `Sources/Moves/Views/Window/Import/ImportMarkdownView.swift` — drag-drop
+  target + file picker; renders the `ImportPreview` (title, segment
+  titles + moves, item counts) and any warnings. "Import" calls
+  `AppStore.importMarkdown` (single transaction); "Discard" / "Close"
+  resets to empty. Hosted as its own Window scene so file drops don't
+  fight popover focus loss.
+- `Sources/Moves/Views/Window/TimeLog/WeeklyView.swift` — §14 weekly
+  rough-time pane. One row per thread that had at least one entry in the
+  active ISO week (Monday-start). Prev / Next chrome navigates by ±7
+  days; "This week" button anchors back to now. Empty weeks render a
+  `ContentUnavailableView` with the §2.5-friendly "Rough time gets
+  logged when you stop, switch, or finish a segment." copy.
+
+- `Sources/Moves/Model/AppStore.swift` — gained:
+  - `segmentsByThread: [String: [Segment]]` — cache populated by
+    `rebuildAvailable` and `loadSegments(for:)`. Used by SegmentsPanel
+    and the popover's CurrentSection (the popover now shows the displayed
+    segment line).
+  - `currentSegment(for: Thread) -> Segment?` — wraps
+    `MoveResolver.displayedSegment` against the cache.
+  - `loadSegments(for:)`, `activateSegment(_:)`, `completeActiveSegment
+    (thread:rough:)`, `skipSegment(_:)`, `addSegment(thread:title:
+    builtInMove:body:)`, `editSegment(_:)`.
+  - `importMarkdown(_:now:) async -> ImportResult?` — parses, persists
+    thread + segments + items, refreshes caches; appends a "thread with
+    same title already exists" warning so the duplicate produces a
+    distinct row by intent rather than by accident.
+  - `weeklyView(for: Date) async -> WeeklySummary` — reads
+    `time_log.week_start` directly so prior weeks remain queryable as
+    the user navigates back.
+  - `weekStartString(for:)` now delegates to `TimeLogService.weekStart`
+    so writers and readers share a single source of truth.
+- `Sources/Moves/Domain/FlowContext.swift` — added
+  `.completeSegment(threadId, segmentId)` case.
+- `Sources/Moves/Views/Popover/PopoverWindowID.swift` — added
+  `.completeSegment` and `.importMarkdown` scene ids.
+- `Sources/Moves/Views/Window/SidebarDestination.swift` — added `.timeLog`.
+- `Sources/Moves/Views/Window/RootWindow.swift` — sidebar renders the
+  "Time Log" entry (no badge — §2.5 "no shame language" applies); a
+  bottom-rail "Import Markdown…" button opens the import scene.
+- `Sources/Moves/MovesApp.swift` — two new `Window` scenes for
+  CompleteSegmentSheet and ImportMarkdownView.
+- `Sources/Moves/Views/Popover/MenuPopoverView.swift` — the popover's
+  CurrentSection now receives the active segment from
+  `AppStore.currentSegment(for:)`, so completing a regimented segment
+  immediately changes the segment line + the Available move (which was
+  already routed through `MoveResolver` + `segmentsByThread`).
+
+Phase 5 invariants enforced by code + tests:
+
+- **Exactly one segment is active per thread (§3).** `activateSegment`
+  demotes any other active segments on the same thread before promoting
+  the target. Tested in `Phase5AppStoreTests.testActivateSegmentDemotes
+  PreviousActive`.
+- **Switching / parking / stopping leave segments alone (§5.5).** The
+  `stop / switchTo / park` codepaths never touch segments; only
+  `completeActiveSegment` and `skipSegment` do. Tested in
+  `testSwitchingDoesNotTouchSegmentStatus`.
+- **Completion logs against (thread, segment), not just thread.** §14's
+  `time_log.segment_id` column carries the segment id on completion logs
+  but stays nil on stop/switch logs. Tested in `testCompleteActive
+  SegmentLogsTimeAndAdvances`.
+- **Rough=.none skips the time_log write.** Same rule as Phase 3 Stop —
+  the user said "no, not really". Tested in `testCompleteActiveSegment
+  WithNoneBucketSkipsLog`.
+- **Segment lifecycle survives relaunch.** DOD assertion: write through
+  one AppStore, reopen against the same DB, verify status + time_log.
+  Tested in `testSegmentLifecycleSurvivesRelaunch`.
+- **§9 import is create-only in v1.** Re-importing the same title makes
+  a new thread; a warning surfaces in the preview so the user can cancel.
+  Tested in `testImportingSameTitleTwiceProducesDistinctThreadsWithWarning`.
+- **§11 fall-through for regimented-no-breadcrumb threads.** Both
+  "first pending segment wins" and "active segment wins over pending"
+  pathways are exercised by `MoveResolverTests.testRegimentedThreadNo
+  Breadcrumb*`.
+
+Open-question decisions honored:
+
+- **Built-in move display:** the popover's CurrentSection renders
+  "Next: <breadcrumb>" when a breadcrumb exists and the segment row
+  carries the segment title above it. SegmentsPanel renders pending rows
+  with "Next: <built-in move>" inline — consistent with the §4.1 popover
+  example.
+- **YAML library:** tiny built-in parser. The §9 schema is small enough
+  that a Yams dependency wasn't justified; if v2 needs lists or nested
+  mappings we'll revisit.
+- **Week boundary:** ISO weeks, Monday-start. `Calendar.iso8601Monday`
+  is the single source of truth for both the writer (TimeLog rows) and
+  the reader (WeeklyView).
+
+Tests (131 total, was 94):
+
+- `Tests/MovesTests/MarkdownImportServiceTests.swift` — 11 cases.
+  Includes the §9 example (DOD), unsupported frontmatter / kind warnings,
+  default estimate inheritance, segment metadata (date, due, estimate,
+  unsupported keys), checked items as done, residual body capture,
+  empty input, content-before-first-H2 dropping, unclosed frontmatter.
+- `Tests/MovesTests/TimeLogServiceTests.swift` — 9 cases. weekStart for
+  Monday / Tuesday / Sunday; aggregate sums + tie-breaking + empty;
+  roughBucketLabel for under-hour rounding, hour multiples, hour+minutes.
+- `Tests/MovesTests/Phase5AppStoreTests.swift` — 13 cases. Segment
+  lifecycle (add / activate uniqueness / complete + advance / complete
+  with no pending / skip / switch doesn't advance), `.none` bucket skips
+  log, lifecycle survives relaunch (DOD), §9 import end-to-end (DOD),
+  duplicate titles produce distinct threads, weekly view aggregates
+  across stop + segment-complete logs (DOD), empty weekly view,
+  segmentsByThread cache feeds Available.
+- `Tests/MovesTests/MoveResolverTests.swift` — 2 new cases for the §11
+  regimented-no-breadcrumb fall-through (active-segment wins, first-
+  pending wins). Pre-existing tests already exercised the empty-built-in-
+  move fall-through to open items; these add explicit coverage of the
+  "Markdown import lands and the first render works" path.
+
+Heads-up for future agents:
+
+- The popover CurrentSection now reads `AppStore.currentSegment(for:)`
+  so it will show the active segment title between the thread title and
+  the breadcrumb when the current thread is regimented. The cache is
+  rebuilt by `rebuildAvailable`; if you call segment writes elsewhere,
+  the cache is also touched by `loadSegments(for:)` /
+  `activateSegment` / `completeActiveSegment` / `skipSegment` /
+  `addSegment` / `editSegment` directly.
+- `SegmentsPanel` reads from `store.segmentsByThread[thread.id]`, not a
+  local @State copy. Any segment write through the store flows back to
+  the view via @Observable.
+- Import is wired into the sidebar bottom rail (not a destination). A
+  future iteration could promote it to a real "New thread from
+  Markdown…" command in the File menu — out of scope for Phase 5.
+- The §9 parser intentionally drops content before the first H2 — if a
+  future spec extension wants a "thread description" Markdown block,
+  add it to the frontmatter (`description: |`) and update the parser
+  to accept the YAML block scalar form.
+- `Calendar.iso8601Monday` is a static convenience that lives in
+  `TimeLogService.swift`. If a future surface needs the same calendar,
+  re-use the static; don't construct ad hoc.
+
+`make check` + `make test` green (131/131).
+
+
 
 End-to-end visual gate (walk all six panes, thread detail, captured
 processing, settings) caught two real bugs:

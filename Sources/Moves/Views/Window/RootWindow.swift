@@ -12,6 +12,7 @@ import SwiftUI
 /// detail pane resolves.
 struct RootWindow: View {
   @Environment(AppStore.self) private var store
+  @Environment(\.openWindow) private var openWindow
   @State private var selection: SidebarDestination? = .available
 
   var body: some View {
@@ -46,10 +47,37 @@ struct RootWindow: View {
         sidebarRow(.parkingLot, "Parking Lot", icon: "pause.circle", badge: store.threads(matching: .parked).count)
       }
       Section {
+        // Phase-5 §14 weekly time-log pane. No badge — the weekly view is
+        // never "unread" in a way that should pull the user's attention,
+        // per the §2.5 "no shame language" rule.
+        sidebarRow(.timeLog, "Time Log", icon: "clock.arrow.circlepath", badge: 0)
         sidebarRow(.settings, "Settings", icon: "gearshape", badge: 0)
       }
     }
     .listStyle(.sidebar)
+    .safeAreaInset(edge: .bottom) {
+      sidebarFooter
+    }
+  }
+
+  /// Phase-5: bottom-rail "Import Markdown…" affordance. Opens the
+  /// `ImportMarkdownView` window scene where the user can drop a §9 file.
+  /// Sits in the sidebar bottom rail (not a destination) because import is
+  /// a one-shot action, not a place you navigate to.
+  private var sidebarFooter: some View {
+    HStack {
+      Button {
+        openWindow(id: PopoverWindowID.importMarkdown.rawValue)
+      } label: {
+        Label("Import Markdown…", systemImage: "square.and.arrow.down")
+          .font(.system(size: 12))
+      }
+      .buttonStyle(.borderless)
+      .help("Import a regimented thread from a Markdown file (§9 grammar)")
+      Spacer()
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
   }
 
   /// Same projection AvailableView renders, so the sidebar badge count
@@ -105,6 +133,8 @@ struct RootWindow: View {
       DeadlinesView()
     case .parkingLot:
       ParkingLotView(onSelectThread: routeToThread)
+    case .timeLog:
+      WeeklyView()
     case .settings:
       SettingsView()
     }

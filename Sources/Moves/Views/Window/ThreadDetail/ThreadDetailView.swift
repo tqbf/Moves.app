@@ -101,40 +101,15 @@ struct ThreadDetailView: View {
 
   // MARK: - Current segment
 
+  /// Phase 5: SegmentsPanel takes over for regimented threads. Renders the
+  /// ordered list (active highlighted, pending dimmed, done/skipped collapsed
+  /// under a disclosure) plus the inline "Add segment" field. Segment editing
+  /// (move + body Markdown autosave) lives inline inside the active row's
+  /// `SegmentDetail`.
   @ViewBuilder
   private var currentSegmentSection: some View {
     if thread.kind == .regimented {
-      VStack(alignment: .leading, spacing: 6) {
-        Text("Current segment")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.tertiary)
-          .textCase(.uppercase)
-          .kerning(0.5)
-        if let segment = MoveResolver.displayedSegment(for: segments) {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(segment.title)
-              .font(.system(size: 14, weight: .medium))
-            if !segment.builtInMove.isEmpty {
-              Text("Built-in move: \(segment.builtInMove)")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            }
-            Text("Segment editing lands in Phase 5.")
-              .font(.system(size: 11))
-              .foregroundStyle(.tertiary)
-          }
-          .padding(12)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-              .fill(.background.secondary)
-          )
-        } else {
-          Text("No active segment.")
-            .font(.system(size: 13))
-            .foregroundStyle(.secondary)
-        }
-      }
+      SegmentsPanel(thread: thread)
     }
   }
 
@@ -214,12 +189,14 @@ struct ThreadDetailView: View {
 
   private func loadRelations() async {
     do {
-      segments = thread.kind == .regimented
-        ? try await store.segmentRepository.forThread(thread.id)
-        : []
+      if thread.kind == .regimented {
+        await store.loadSegments(for: thread.id)
+        segments = store.segmentsByThread[thread.id] ?? []
+      } else {
+        segments = []
+      }
       items = try await store.itemRepository.forThread(thread.id)
     } catch {
-      segments = []
       items = []
     }
   }

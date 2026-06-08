@@ -88,6 +88,51 @@ final class MoveResolverTests: XCTestCase {
     XCTAssertNil(MoveResolver.resolve(thread: thread, segments: [segment], openItems: []))
   }
 
+  /// Phase-5 §11 fall-through: a regimented thread with no breadcrumb and
+  /// only a pending segment should still surface a move (the segment's
+  /// built-in move). Covers the path that the new SegmentsPanel + Markdown
+  /// import rely on for first-render-after-import.
+  func testRegimentedThreadNoBreadcrumbFallsThroughToPendingSegmentBuiltInMove() {
+    let thread = Thread(title: "Imported", kind: .regimented, breadcrumb: "")
+    let pending = Segment(
+      threadId: thread.id,
+      title: "Day 01",
+      orderIndex: 0,
+      builtInMove: "Write a tiny parser",
+      status: .pending
+    )
+    let resolved = MoveResolver.resolve(thread: thread, segments: [pending], openItems: [])
+    XCTAssertEqual(resolved?.text, "Write a tiny parser")
+    if case let .segment(_, title) = resolved?.source {
+      XCTAssertEqual(title, "Day 01")
+    } else {
+      XCTFail("Expected segment source, got \(String(describing: resolved?.source))")
+    }
+  }
+
+  /// Phase-5 §11 fall-through: a regimented thread with no breadcrumb and
+  /// only an active segment should surface the active segment's move.
+  /// Complements the test above (active vs first-pending pathway).
+  func testRegimentedThreadNoBreadcrumbWithActiveSegmentReturnsActiveMove() {
+    let thread = Thread(title: "Imported", kind: .regimented, breadcrumb: "")
+    let active = Segment(
+      threadId: thread.id,
+      title: "Day 01",
+      orderIndex: 0,
+      builtInMove: "Active move",
+      status: .active
+    )
+    let later = Segment(
+      threadId: thread.id,
+      title: "Day 02",
+      orderIndex: 1,
+      builtInMove: "Later move",
+      status: .pending
+    )
+    let resolved = MoveResolver.resolve(thread: thread, segments: [active, later], openItems: [])
+    XCTAssertEqual(resolved?.text, "Active move")
+  }
+
   func testEmptyBuiltInMoveSkipsToOpenItem() {
     let thread = Thread(title: "Regi", kind: .regimented)
     let segment = Segment(

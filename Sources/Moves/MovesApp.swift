@@ -67,6 +67,24 @@ struct MovesApp: App {
     .windowResizability(.contentSize)
     .defaultPosition(.center)
 
+    // Phase-5 segment-completion sheet (§5.5). Same Window-scene strategy
+    // as Stop/Switch/Park; reads `AppStore.pendingFlow` on appear.
+    Window("Complete Segment", id: PopoverWindowID.completeSegment.rawValue) {
+      CompleteSegmentSheet()
+        .environment(store)
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
+    // Phase-5 Markdown import sheet (§9). Separate scene so file drop +
+    // preview don't fight the popover's focus-loss auto-dismiss.
+    Window("Import Markdown", id: PopoverWindowID.importMarkdown.rawValue) {
+      ImportMarkdownView()
+        .environment(store)
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
     MenuBarExtra {
       MenuPopoverView()
         .environment(store)

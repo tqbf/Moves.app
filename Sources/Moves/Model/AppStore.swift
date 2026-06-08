@@ -46,6 +46,12 @@ final class AppStore {
   /// alongside `availableThreads`.
   private(set) var openItemsByThread: [String: [Item]] = [:]
 
+  /// Segments grouped by thread id, refreshed by `rebuildAvailable`. Used
+  /// by the Phase-5 `SegmentsPanel` so the thread-detail view doesn't have
+  /// to re-query on every render, and by `currentSegment(for:)` so the
+  /// popover can show the displayed segment without an async hop.
+  private(set) var segmentsByThread: [String: [Segment]] = [:]
+
   /// Cached working-hours config from the `settings` table. Defaults
   /// to `.default` until `loadWorkingHours()` resolves a stored row.
   private(set) var workingHours: WorkingHours = .default
@@ -167,6 +173,7 @@ final class AppStore {
   func rebuildAvailable() async {
     var built: [AvailableThread] = []
     var openItems: [String: [Item]] = [:]
+    var segmentsCache: [String: [Segment]] = [:]
     for thread in threads where thread.status == .active {
       do {
         let segments = thread.kind == .regimented
@@ -174,6 +181,9 @@ final class AppStore {
           : []
         let items = try await itemRepository.openForThread(thread.id)
         openItems[thread.id] = items
+        if thread.kind == .regimented {
+          segmentsCache[thread.id] = segments
+        }
         if let move = MoveResolver.resolve(thread: thread, segments: segments, openItems: items) {
           built.append(AvailableThread(thread: thread, move: move))
         }
@@ -183,6 +193,7 @@ final class AppStore {
     }
     availableThreads = built
     openItemsByThread = openItems
+    segmentsByThread = segmentsCache
   }
 
   func reloadCaptured() async {
@@ -472,17 +483,11 @@ final class AppStore {
     try await timeLogRepository.insert(entry)
   }
 
-  /// `YYYY-MM-DD` for the Monday of the current local-calendar ISO week.
-  /// Matches the migration's `idx_time_log_week` grouping intent (§14).
+  /// `YYYY-MM-DD` for the Monday of the current ISO week. Delegates to
+  /// `TimeLogService.weekStart(for:)` so the writer (stop/switch/complete-
+  /// segment) and reader (`weeklyView(for:)`) agree on the bucket key.
   static func weekStartString(for date: Date) -> String {
-    var calendar = Calendar(identifier: .iso8601)
-    calendar.firstWeekday = 2 // Monday
-    let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-    let monday = calendar.date(from: components) ?? date
-    let formatter = DateFormatter()
-    formatter.calendar = calendar
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter.string(from: monday)
+    TimeLogService.weekStart(for: date)
   }
 
   // MARK: - Thread editing (Phase 4)
@@ -759,5 +764,240 @@ final class AppStore {
 
   private func report(_ message: String) {
     loadError = message
+  }
+
+  // MARK: - Segment lifecycle (Phase 5)
+
+  /// Currently-displayed segment for a thread per `MoveResolver.displayedSegment`
+  /// rules (active wins; else first pending by orderIndex). Reads from the
+  /// cached `segmentsByThread` to avoid a DB round-trip.
+  func currentSegment(for thread: Thread) -> Segment? {
+    guard thread.kind == .regimented else { return nil }
+    let segments = segmentsByThread[thread.id] ?? []
+    return MoveResolver.displayedSegment(for: segments)
+  }
+
+  /// Fetch all segments for a thread (any status) and cache the result.
+  /// Used by the thread-detail SegmentsPanel which needs Done/Skipped rows
+  /// too, not just the active/pending set `rebuildAvailable` cares about.
+  func loadSegments(for threadId: String) async {
+    do {
+      let segments = try await segmentRepository.forThread(threadId)
+      segmentsByThread[threadId] = segments
+    } catch {
+      loadError = "Segment load failed: \(error)"
+    }
+  }
+
+  /// Set `segment` as the thread's active segment. Demotes any other active
+  /// segments on the same thread back to `.pending` so the §3 invariant
+  /// "only one segment is active per regimented thread" holds.
+  ///
+  /// Used by `SegmentsPanel`'s "Make active" affordance and by
+  /// `completeActiveSegment(thread:rough:)` to promote the next pending row.
+  func activateSegment(_ segment: Segment) async {
+    let threadId = segment.threadId
+    let now = Int64(Date().timeIntervalSince1970)
+    do {
+      let segments: [Segment]
+      if let cached = segmentsByThread[threadId] {
+        segments = cached
+      } else {
+        segments = (try? await segmentRepository.forThread(threadId)) ?? []
+      }
+      for var other in segments where other.status == .active && other.id != segment.id {
+        other.status = .pending
+        other.updatedAt = now
+        try await segmentRepository.update(other)
+      }
+      var copy = segment
+      copy.status = .active
+      copy.updatedAt = now
+      try await segmentRepository.update(copy)
+      await loadSegments(for: threadId)
+      await rebuildAvailable()
+    } catch {
+      loadError = "Activate segment failed: \(error)"
+    }
+  }
+
+  /// Mark the active segment of `thread` done, log rough time against it,
+  /// and advance to the next pending segment (the lowest `orderIndex` row
+  /// among `.pending`). The next-segment promotion follows §5.5: explicit
+  /// advancement only — switching, parking, and stopping do not touch
+  /// segment status.
+  ///
+  /// If no pending segment remains, the thread is left without an active
+  /// segment; `MoveResolver` will fall through to open items (§11.3) or
+  /// surface nothing (§22).
+  func completeActiveSegment(thread: Thread, rough: RoughTimeBucket) async {
+    guard thread.kind == .regimented else { return }
+    do {
+      let segments = try await segmentRepository.forThread(thread.id)
+      guard let active = segments.first(where: { $0.status == .active }) else {
+        // No active segment → nothing to complete. Defensive guard.
+        loadError = "No active segment on \(thread.title)."
+        return
+      }
+      let now = Int64(Date().timeIntervalSince1970)
+      var done = active
+      done.status = .done
+      done.updatedAt = now
+      try await segmentRepository.update(done)
+
+      // Log rough time attributed to the (thread, segment) per §14.
+      try await logRoughTime(threadId: thread.id, segmentId: active.id, rough: rough)
+
+      // Promote the next pending segment (lowest orderIndex) to active.
+      let nextPending = segments
+        .filter { $0.status == .pending && $0.id != active.id }
+        .sorted { $0.orderIndex < $1.orderIndex }
+        .first
+      if let next = nextPending {
+        var promoted = next
+        promoted.status = .active
+        promoted.updatedAt = now
+        try await segmentRepository.update(promoted)
+      }
+      await loadSegments(for: thread.id)
+      await rebuildAvailable()
+    } catch {
+      loadError = "Complete segment failed: \(error)"
+    }
+  }
+
+  /// Skip a segment without logging time. Used by `SegmentsPanel`'s
+  /// "Skip" overflow action. If the skipped segment was active, the next
+  /// pending segment is promoted (same rules as completion) — without this,
+  /// a skipped active would leave the thread silently de-activated.
+  func skipSegment(_ segment: Segment) async {
+    let now = Int64(Date().timeIntervalSince1970)
+    do {
+      var copy = segment
+      copy.status = .skipped
+      copy.updatedAt = now
+      try await segmentRepository.update(copy)
+
+      if segment.status == .active {
+        let segments = try await segmentRepository.forThread(segment.threadId)
+        let nextPending = segments
+          .filter { $0.status == .pending }
+          .sorted { $0.orderIndex < $1.orderIndex }
+          .first
+        if let next = nextPending {
+          var promoted = next
+          promoted.status = .active
+          promoted.updatedAt = now
+          try await segmentRepository.update(promoted)
+        }
+      }
+      await loadSegments(for: segment.threadId)
+      await rebuildAvailable()
+    } catch {
+      loadError = "Skip segment failed: \(error)"
+    }
+  }
+
+  /// Append a new pending segment to `thread`. Order index is `count`
+  /// (zero-based) so new segments land at the bottom of the list.
+  @discardableResult
+  func addSegment(
+    thread: Thread,
+    title: String,
+    builtInMove: String = "",
+    body: String = ""
+  ) async -> Segment? {
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    do {
+      let existing = try await segmentRepository.forThread(thread.id)
+      let segment = Segment(
+        threadId: thread.id,
+        title: trimmed,
+        orderIndex: existing.count,
+        bodyMarkdown: body,
+        builtInMove: builtInMove,
+        status: .pending
+      )
+      try await segmentRepository.insert(segment)
+      await loadSegments(for: thread.id)
+      await rebuildAvailable()
+      return segment
+    } catch {
+      loadError = "Add segment failed: \(error)"
+      return nil
+    }
+  }
+
+  /// Update an existing segment (title / body / built-in move / etc.).
+  /// Persists, re-bumps `updatedAt`, refreshes caches.
+  func editSegment(_ segment: Segment) async {
+    var copy = segment
+    copy.updatedAt = Int64(Date().timeIntervalSince1970)
+    do {
+      try await segmentRepository.update(copy)
+      await loadSegments(for: segment.threadId)
+      await rebuildAvailable()
+    } catch {
+      loadError = "Edit segment failed: \(error)"
+    }
+  }
+
+  // MARK: - Markdown import (Phase 5)
+
+  /// Parse `source` as a §9 Markdown import and persist all rows in one
+  /// transactional pass. Re-imports of the same title produce a new thread
+  /// (v1 is create-only per the Phase 5 plan); a warning is appended.
+  ///
+  /// Returns a result describing what landed so the import view can show a
+  /// confirmation toast and navigate to the new thread.
+  @discardableResult
+  func importMarkdown(_ source: String, now: Date = Date()) async -> ImportResult? {
+    var preview = MarkdownImportService.parse(source, now: now)
+    // Surface a warning for duplicate titles before the commit.
+    if threads.contains(where: { $0.title == preview.thread.title }) {
+      preview.warnings.append(
+        "A thread titled '\(preview.thread.title)' already exists. Import creates a new thread (v1 is create-only)."
+      )
+    }
+    do {
+      try await threadRepository.insert(preview.thread)
+      for segment in preview.segments {
+        try await segmentRepository.insert(segment)
+      }
+      for item in preview.items {
+        try await itemRepository.insert(item)
+      }
+      await reloadThreads()
+      await reloadCaptured()
+      await rebuildAvailable()
+      return ImportResult(
+        threadId: preview.thread.id,
+        segmentCount: preview.segments.count,
+        itemCount: preview.items.count,
+        warnings: preview.warnings
+      )
+    } catch {
+      loadError = "Markdown import failed: \(error)"
+      return nil
+    }
+  }
+
+  // MARK: - Weekly view (Phase 5 / §14)
+
+  /// Aggregate rough-time minutes per thread for the ISO week containing
+  /// `date`. Reads from `time_log` directly so the projection isn't tied to
+  /// any in-memory cache: prior weeks remain queryable as the user navigates
+  /// back with the prev/next chrome.
+  func weeklyView(for date: Date) async -> WeeklySummary {
+    let weekStart = TimeLogService.weekStart(for: date)
+    do {
+      let entries = try await timeLogRepository.forWeek(weekStart)
+      let aggregates = TimeLogService.aggregate(entries: entries)
+      return WeeklySummary(weekStart: weekStart, entries: aggregates)
+    } catch {
+      loadError = "Weekly view load failed: \(error)"
+      return WeeklySummary.empty(weekStart: weekStart)
+    }
   }
 }

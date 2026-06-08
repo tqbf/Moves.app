@@ -13,5 +13,8 @@ enum SidebarDestination: Hashable, Sendable {
   case captured
   case deadlines
   case parkingLot
+  /// Phase 5: §14 weekly rough-time aggregation pane. Sums `time_log` rows
+  /// for the active ISO week, with prev/next navigation.
+  case timeLog
   case settings
 }

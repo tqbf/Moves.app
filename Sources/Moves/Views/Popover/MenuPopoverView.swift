@@ -43,7 +43,7 @@ struct MenuPopoverView: View {
       // content overflows the OS-imposed max height, so the sections can
       // stack directly in a VStack.
       VStack(spacing: 0) {
-        CurrentSection(currentSegment: nil)
+        CurrentSection(currentSegment: currentSegmentForCurrentThread)
         Divider().padding(.horizontal, 14)
 
         UpcomingSection(headroom: headroom)
@@ -59,6 +59,16 @@ struct MenuPopoverView: View {
 
       footer
     }
+  }
+
+  /// Phase 5 wiring: the current thread's active (or first pending) segment,
+  /// resolved from the cached `segmentsByThread` so the popover renders the
+  /// active segment header line in CurrentSection. CompleteSegmentSheet
+  /// updates the cache via `rebuildAvailable`, so the popover follows.
+  private var currentSegmentForCurrentThread: Segment? {
+    guard let id = store.current.threadId,
+          let thread = store.thread(id: id) else { return nil }
+    return store.currentSegment(for: thread)
   }
 
   // MARK: - Header
