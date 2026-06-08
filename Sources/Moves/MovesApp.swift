@@ -25,7 +25,7 @@ struct MovesApp: App {
   @State private var notificationDelegate: NotificationDelegate?
 
   var body: some Scene {
-    Window("Moves", id: "main") {
+    Window("Moves", id: PopoverWindowID.main.rawValue) {
       MainView()
         .environment(store)
         .frame(minWidth: 720, minHeight: 440)
@@ -41,8 +41,34 @@ struct MovesApp: App {
       }
     }
 
+    // Phase-3 flow windows. Each runs as its own SwiftUI `Window` scene
+    // because `MenuBarExtra`'s popover auto-dismisses on focus loss —
+    // a SwiftUI `.sheet` modifier would die with its host. The scenes
+    // read their context from `AppStore.pendingFlow`, which the popover
+    // stages before calling `openWindow(id:)`.
+    Window("Stop", id: PopoverWindowID.stop.rawValue) {
+      StopSheet()
+        .environment(store)
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
+    Window("Switch", id: PopoverWindowID.switchFlow.rawValue) {
+      SwitchSheet()
+        .environment(store)
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
+    Window("Park", id: PopoverWindowID.park.rawValue) {
+      ParkSheet()
+        .environment(store)
+    }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
     MenuBarExtra {
-      MenuBarContent()
+      MenuPopoverView()
         .environment(store)
     } label: {
       // Plain-text "•N" suffix matches INITIAL-PLAN §16's "menu-bar icon may
@@ -67,7 +93,11 @@ struct MovesApp: App {
   private func bootstrap() async {
     // Install the controller + delegate exactly once.
     if capturePalette == nil {
-      capturePalette = CapturePaletteController(store: store)
+      let controller = CapturePaletteController(store: store)
+      capturePalette = controller
+      // Publish the singleton slot so the popover's Capture button can
+      // reach it without re-injecting through the SwiftUI environment.
+      CapturePaletteSingleton.shared = controller
     }
     if notificationDelegate == nil {
       let delegate = NotificationDelegate(store: store)

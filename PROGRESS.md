@@ -2,6 +2,134 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 3: menu-bar popover + current-state flows
+
+Phase 3 ships the daily-driver UI. The placeholder `MenuBarContent.swift` is
+gone; the menu bar now opens the real Current / Upcoming / Available /
+Captured popover with a Capture / Parking Lot / Open App footer, and
+Stop / Switch / Park run as their own Window scenes so the popover can
+auto-dismiss on focus loss without killing the modal host.
+
+What landed:
+
+- `Sources/Moves/Services/HeadroomService.swift` — pure
+  `resolve(now:items:) -> Headroom(nextHard:Item?, runway:TimeInterval?)`.
+  Hard-only by §2.10; soft and `.none`-interruption items are excluded
+  from the runway calc. Overdue hard items report a *negative* runway so
+  the UI can render "12m overdue" honestly instead of clamping to zero.
+- `Sources/Moves/Views/Popover/{MenuPopoverView,CurrentSection,
+  UpcomingSection,AvailableSection,CapturedSection,PopoverSectionContainer,
+  PopoverWindowID}.swift` — one section per file, plus a shared container
+  + a `PopoverWindowID` enum so scenes/buttons can't drift on raw strings.
+  Top-level `MenuPopoverView` wraps the four sections in a `TimelineView`
+  that re-fires `HeadroomService.resolve` every 60s while the popover is
+  open. Width pinned at 320pt, max scroll height 460pt — matches
+  Spotlight-ish proportions.
+- `Sources/Moves/Views/Flows/{StopSheet,SwitchSheet,ParkSheet,
+  RoughTimePicker,FlowSheetChrome}.swift` — three modal sheets that read
+  context from `AppStore.pendingFlow` on appear and call back into the
+  store on confirm. The shared `FlowSheetChrome` wires `defaultAction` +
+  `cancelAction` so Return/Esc work; each sheet is `.fixedSize(vertical:
+  true)` inside a `.windowResizability(.contentSize)` Window scene.
+- `Sources/Moves/Domain/{AvailableThread,RoughTimeBucket,FlowContext}.swift`
+  — small value types used by the popover/flows. `RoughTimeBucket` carries
+  both the seven §14 cases and the chip-label strings (kept off the view
+  so future surfaces — Phase 5 segment completion — can reuse them).
+- `Sources/Moves/Model/AppStore.swift` — gains:
+  - `current: CurrentState` (cached mirror of the one-row table)
+  - `upcomingItems: [Item]` (drives Upcoming + headroom)
+  - `availableThreads: [AvailableThread]` (§22-filtered projection,
+    rebuilt on every reload via `MoveResolver.resolve(...)`)
+  - `pendingFlow: FlowContext?` (sheet context handoff)
+  - `start(_:)` — sets Current + touches `last_touched_at`
+  - `stop(breadcrumb:rough:)` — clears Current, persists breadcrumb,
+    writes one `TimeLogEntry` for the bucket (skipped when `.none`)
+  - `switchTo(_:breadcrumb:rough:)` — saves breadcrumb + time-log
+    against the *previous* thread, then `start(target)`
+  - `park(_:breadcrumb:)` — sets status=parked, saves breadcrumb,
+    clears Current if it was the parked thread, no time-log write
+  - `rebuildAvailable()` / `reloadCurrent()` / `reloadUpcoming()` —
+    granular reloads composed by `load()`
+  - Designated `init(databasePath:enableNotifications:)` so tests can
+    point at a temp DB *and* skip the `UNUserNotificationCenter.current()`
+    call (which throws in the SwiftPM xctest host with no proper main
+    bundle).
+- `Sources/Moves/MovesApp.swift` — registers three new Window scenes
+  (`flow-stop`, `flow-switch`, `flow-park`) plus the existing `main`,
+  and replaces the throwaway `MenuBarContent` body with `MenuPopoverView`.
+  Bootstrap now publishes the `CapturePaletteController` into a tiny
+  `CapturePaletteSingleton` slot so the popover's Capture button can
+  reach it without re-injecting through the environment.
+
+Removed:
+- `Sources/Moves/Views/MenuBarContent.swift` — replaced wholesale by
+  `MenuPopoverView` and its sections.
+
+Tests (62 total, was 45):
+- `Tests/MovesTests/HeadroomServiceTests.swift` — 8 cases. Covers:
+  no items, only-soft, only `.none`, single-hard exact runway, earliest
+  hard wins, hard-without-dueAt excluded, overdue reports negative
+  runway, mixed overdue + future picks the overdue one.
+- `Tests/MovesTests/FlowRoundTripTests.swift` — 9 cases. End-to-end
+  round-trip of `start` / `stop` / `switch` / `park` through a real
+  on-disk DB. Asserts: stop clears Current + persists breadcrumb +
+  writes one time-log row; `.none` bucket skips the time-log;
+  switch attributes the time-log to the *previous* thread and leaves
+  the new target unattributed; park sets status, drops the thread from
+  `availableThreads` (§22 enforcement), writes no time-log, and clears
+  Current when it was the parked thread; thread with no re-entry move
+  is absent from Available until an open item appears.
+
+Phase 3 decisions honored:
+
+- Sheets are separate `Window` scenes, not SwiftUI `.sheet` modifiers.
+  `MenuBarExtra` popovers auto-dismiss on focus loss, which would kill
+  a sheet's host. Each sheet reads its target from
+  `AppStore.pendingFlow` on `.onAppear` and calls `dismissWindow(id:)`
+  on confirm/cancel.
+- Current writes go through `CurrentStateRepository`; the popover reads
+  `AppStore.current`. `current` is mirrored in-memory so the view tree
+  doesn't await on every render.
+- Park is breadcrumb-only — no rough-time prompt. Parking ≠ stopping.
+- Available ordering: `last_touched_at DESC` (§12). Re-touched on any
+  Current change *and* on breadcrumb edits. The repo's `ORDER BY` and
+  the in-memory `touch(threadId:at:)` sort agree.
+- De-emphasis is rendered, not hidden: `ThreadVisibility.downweightWork`
+  rows land in a separate "De-emphasized during working hours" group
+  below normal Available, with reduced font weight + secondary
+  foreground. Working-hours classification of *other* visibilities is
+  Phase 4 territory; this scaffolds the layout so Phase 4 only wires
+  the policy.
+- `S` key triggers Stop from the popover. The keyboard shortcut is
+  rendered inline next to the Stop button as a muted monospaced "S"
+  hint so users discover it (per the Phase 3 plan's open-question
+  decision).
+- §22 invariant: `AppStore.rebuildAvailable()` runs `MoveResolver.resolve`
+  per active thread and only keeps rows with a non-nil resolved move.
+  Threads without a re-entry point — including active-but-empty threads
+  — never enter the Available projection. Covered by two flow tests
+  (`testThreadWithoutReentryPointIsAbsentFromAvailable`,
+  `testParkedThreadAbsentFromAvailableEvenWithBreadcrumb`).
+
+Heads-up for future agents:
+
+- The "Switch" button in the Current section is intentionally disabled.
+  Clicking another row in Available is the canonical switch trigger;
+  the inline button is there for affordance only. A future settings
+  iteration could turn it into a target picker, but the popover wants
+  to stay calm.
+- "Parking Lot" footer button opens the main window today as a temporary
+  landing pad — Phase 4 owns the dedicated Parking Lot pane.
+- `CapturePaletteSingleton.shared` is a weak slot published at
+  bootstrap. The popover reads it via `CapturePaletteSingleton.shared
+  ?.show()`. If a Phase 4 refactor introduces a real environment-injected
+  controller, drop the slot.
+- The Phase-1 deferred "drop Optional repo state" recommendation
+  remains deferred — Phase 4 settings work is still the right place
+  to make the call, per the user's standing instruction.
+
+`make check` + `make test` green (62/62).
+
 ## 2026-06-08 — Phase 2 gate: palette focus + chrome + menubar badge fixes
 
 End-to-end visual verification with computer-use caught four real bugs in the
