@@ -58,6 +58,11 @@ struct MovesApp: App {
   @State private var store = AppStore()
   @State private var capturePalette: CapturePaletteController?
   @State private var notificationDelegate: NotificationDelegate?
+  /// Used by the Help menu command to open the in-app `HelpView` window
+  /// scene. Scene-level commands can't capture `@Environment(\.openWindow)`
+  /// directly inside the `.commands { }` closure, so we read it once at
+  /// the `App` level and pass it down via the command-group view.
+  @Environment(\.openWindow) private var openWindow
 
   /// Menu-bar knight glyph. Loads `logo.png` from Resources/, runs
   /// CIMaskToAlpha to convert its white background to transparent (the
@@ -188,6 +193,17 @@ struct MovesApp: App {
         Button("Capture…") { capturePalette?.show() }
           .keyboardShortcut("k", modifiers: [.command, .shift])
       }
+      // Replace the entire Help menu so "Moves Help" is the only entry,
+      // bound to the standard ⌘? shortcut. The default Help menu's
+      // search field is useful for documented apps but adds clutter for
+      // a single-page in-app help — the explicit replacement matches the
+      // pattern used by other focused macOS utilities.
+      CommandGroup(replacing: .help) {
+        Button("Moves Help") {
+          openWindow(id: PopoverWindowID.help.rawValue)
+        }
+        .keyboardShortcut("?")
+      }
     }
 
     // Phase-3 flow windows. Each runs as its own SwiftUI `Window` scene
@@ -240,6 +256,19 @@ struct MovesApp: App {
       OnboardingHost()
         .environment(store)
     }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
+    // In-app Help window. Hosts `HelpView` — a single vertically-scrolling
+    // teaching page covering the core vocabulary (threads, items,
+    // breadcrumbs, deadlines, working hours). Opened from Help → "Moves
+    // Help" (⌘?). Its own scene rather than a `.sheet` so the menubar
+    // popover's focus-loss dismissal doesn't kill it, and so the reader
+    // can keep it open alongside the main window.
+    Window("Moves Help", id: PopoverWindowID.help.rawValue) {
+      HelpView()
+    }
+    .defaultSize(width: 600, height: 700)
     .windowResizability(.contentSize)
     .defaultPosition(.center)
 

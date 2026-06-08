@@ -20,4 +20,9 @@ enum PopoverWindowID: String {
   /// Phase-6: first-launch onboarding modal. Window scene so the menubar
   /// popover doesn't kill it on focus loss; re-runnable from Settings.
   case onboarding = "onboarding"
+  /// In-app help window. Hosts `HelpView` as its own Window scene so the
+  /// menubar popover's focus-loss auto-dismiss doesn't kill it, and so
+  /// the user can keep it open alongside the main window while learning
+  /// the vocabulary.
+  case help = "help"
 }
