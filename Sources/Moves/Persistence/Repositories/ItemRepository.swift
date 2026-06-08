@@ -72,6 +72,28 @@ struct ItemRepository: Sendable {
     )
   }
 
+  /// Count of items that are due-now or overdue AND hard-interruption AND
+  /// still open/captured. Drives the menu-bar badge per INITIAL-PLAN §16.
+  func dueOrOverdueHardCount(now: Int64) async throws -> Int {
+    let count: Int? = try await db.queryOne(
+      """
+      SELECT COUNT(*) FROM items
+      WHERE due_at IS NOT NULL
+        AND interruption_kind = ?
+        AND status IN (?, ?)
+        AND due_at <= ?;
+      """,
+      bind: { stmt in
+        stmt.bindText(InterruptionKind.hard.rawValue, at: 1)
+        stmt.bindText(ItemStatus.captured.rawValue, at: 2)
+        stmt.bindText(ItemStatus.open.rawValue, at: 3)
+        stmt.bindInt64(now, at: 4)
+      },
+      row: Self.readCount
+    )
+    return count ?? 0
+  }
+
   func find(id: String) async throws -> Item? {
     try await db.queryOne(
       """
@@ -156,6 +178,9 @@ struct ItemRepository: Sendable {
     SELECT id, thread_id, segment_id, title, body_markdown, status, kind,
            due_at, due_kind, interruption_kind, created_at, updated_at, completed_at
     """
+
+  /// Row mapper for `SELECT COUNT(*)` projections.
+  static func readCount(_ s: Statement) throws -> Int { s.int(at: 0) }
 
   static func read(_ s: Statement) throws -> Item {
     let statusRaw = s.text(at: 5)

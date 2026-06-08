@@ -2,6 +2,131 @@
 
 Newest first.
 
+## 2026-06-08 — Phase 2: capture hotkey + reminders + notifications + badge
+
+Phase 2 wires the "lightweight reminders" slice end-to-end: a global hotkey
+opens a floating capture palette, typed input is parsed deterministically
+into a Thread-less Item with optional `due_at`/`interruption_kind`, macOS
+notifications fire with snooze actions (5m/15m/1h), and the menu-bar
+icon shows a plain-text `•N` badge for due/overdue hard items only.
+
+What landed:
+
+- `Sources/Moves/Services/CaptureParser.swift` — pure `parse(String, now:)
+  -> ParsedCapture`. Covers exactly §15's grammar: `in <N>m|h`, `at <H>`,
+  `at <H>(am|pm)`, `tomorrow [<H>(|am|pm)]`, `<weekday> [<H>(am|pm)]`,
+  `due|by …`, `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`. Honors §15's interruption
+  defaults: `in`/`at` → hard; `due`/`by` → soft; bare weekday/tomorrow/
+  date forms default to soft (matches the DOD's `submit calc homework
+  Friday 5pm → soft` example). Title is the text *before* the recognized
+  trailing date phrase. No fuzzy matches, no "tonight"/"this weekend".
+- `Sources/Moves/Services/ReminderScheduler.swift` — `@MainActor` bridge
+  to `UNUserNotificationCenter`. Owns `requestAuthorizationIfNeeded()` —
+  lazy, on first capture, never at launch (Phase 2 decision). Owns
+  `scheduleAtDue(item:)`, `snooze(itemId:alertId:title:offset:)`,
+  `cancelPending(itemId:)`, `markFired(alertId:)`. Persists `Alert` rows
+  so phase 6 launch-time reconciliation has a record. The snooze category
+  registers three actions: 5m, 15m, 1h (§16). Single `UNUserNotification
+  CenterProtocol` seam at the bottom of the file so future tests can swap
+  in a fake (the real `UNUserNotificationCenter` adopts trivially).
+- `Sources/Moves/Services/NotificationDelegate.swift` —
+  `UNUserNotificationCenterDelegate` that (a) presents banners while the
+  app is foregrounded — necessary because the menu-bar popover is often
+  the only Moves surface — and (b) routes responses back through
+  `AppStore.handleNotificationResponse(…)`. Holds a weak ref to the store
+  to avoid retaining through the singleton notification center.
+- `Sources/Moves/Views/Capture/CapturePaletteView.swift` — small floating
+  panel (`NSPanel` w/ `.nonactivatingPanel + .utilityWindow`) hosting one
+  text field, a live parse preview ("→ pull rice · today 3:48 PM · hard"),
+  and a "Saved reminder: …" confirm line after Enter. Esc closes. Singleton
+  `CapturePaletteController` owns the panel; global hotkey calls
+  `toggle()`. The "alerts disabled in System Settings" affordance shows
+  when `AppStore.notificationsDenied` is set (after the user declines).
+- `Sources/Moves/MovesApp.swift` — bootstraps the controller + delegate
+  exactly once on first window task, registers the snooze category, and
+  wires `KeyboardShortcuts.onKeyDown(for: .capture)` to
+  `capturePalette.toggle()`. Adds a Cmd-Shift-K menu fallback. The
+  `MenuBarExtra` label now renders `figure.walk.motion` + a `•N` Text
+  suffix when `store.dueOrOverdueHardCount > 0` — plain text, no custom
+  drawing.
+- `Sources/Moves/Model/AppStore.swift` — extended with `capturedItems`
+  (the `ItemRepository.captured()` projection), `dueOrOverdueHardCount`
+  (per §16: hard-only badge count), `notificationsDenied`, `lastCapture`,
+  `capture(_:)`, `handleNotificationResponse(…)`,
+  `deleteCapturedItem(_:)`. Init now also constructs the
+  `ReminderScheduler` next to the rest of the repo set.
+- `Sources/Moves/Persistence/Repositories/ItemRepository.swift` — added
+  `dueOrOverdueHardCount(now:)` projection (binds enum raw values per the
+  Phase 1 gate idiom; no hard-coded SQL strings).
+- `Sources/Moves/Views/MainView.swift` — sidebar now carries a Captured
+  section under Threads with a Phase 2 captured-item detail pane. The
+  detail pane is deliberately small — Phase 4 owns the real processing
+  actions (attach to thread, convert, mark done).
+- `Sources/Moves/Views/MenuBarContent.swift` — header swaps the "N active"
+  caption for "•N due" (orange, medium weight) when the badge is non-zero.
+
+Dependencies:
+
+- Added `sindresorhus/KeyboardShortcuts` (1.9.4+; SwiftPM resolved to
+  1.17.0). Justification: handles the Carbon shim, persistence of
+  user-rebindable shortcuts, and the SwiftUI recorder we'd otherwise
+  hand-roll for the eventual Phase 6 settings page. Only new dep.
+- The shortcut name is `.capture`; default chord is `⌥Space` (Option +
+  Space). Cmd+Space is Spotlight, Cmd+Shift+Space is Alfred/Raycast
+  territory; Option+Space is unclaimed on a stock macOS install and is one
+  chord on every keyboard.
+- `KeyboardShortcuts.Name.capture` is `nonisolated(unsafe) static let` —
+  matches the upstream README's recommendation under Swift 6 strict
+  concurrency.
+
+Tests:
+
+- `Tests/MovesTests/CaptureParserTests.swift` — 30 cases covering every
+  §15 form. Time fixture: 2026-06-08 14:30 UTC (a Monday afternoon), UTC
+  calendar, so dates are stable across CI hosts. The five DOD examples
+  are dedicated test methods (`testCallSarahAtFour`,
+  `testPullRiceIn18m`, `testSubmitCalcHomeworkFridayFivePM`,
+  `testSubmitCalcHomeworkDueFridayFivePM`, `testBuyWalnutDowels`).
+  Also covers: every `in`/`at`/`tomorrow`/weekday/`due`/`by` shape,
+  ISO date + datetime, invalid-month/day rejection (`2026-13-01`,
+  `2026-02-30`), case insensitivity, weekday-skip-to-next-week-when-today,
+  and the bare-hour "next 4:00" rollover behavior (now=14:30 → 16:00
+  today; now=14:30 + "at 2" → 02:00 tomorrow).
+
+`make check` + `make test` green (45/45) — 15 prior + 30 parser. Build
+clean. `.build/checkouts/KeyboardShortcuts` is gitignored along with the
+rest of `.build/`.
+
+Phase 2 decisions honored:
+
+- Notification authorization is requested on first capture, never at
+  launch. Capture still saves on denial (item is persisted; no
+  notification is registered). `notificationsDenied` flips on so the
+  palette can show the "alerts disabled" affordance.
+- Snooze reschedules a new notification at `now + offset`, leaves
+  `Item.due_at` unchanged (matches user intent to defer the *alert*, not
+  the deadline). A fresh `Alert` row records the snooze fire.
+- Badge is hard-only. The query that drives it lives on
+  `ItemRepository.dueOrOverdueHardCount(now:)`; `AppStore` reruns it on
+  every capture/snooze/delete and on `load()`. (Open-question call: badge
+  lives in `AppStore`, not a separate `BadgeService` — we'll lift it
+  out if it grows reconciliation logic.)
+- Parser is §15 only. No "tonight"/"this weekend".
+
+Heads-up for future agents:
+
+- KeyboardShortcuts logs a warning if its UserDefaults store isn't
+  writable; sandboxed builds will need a non-sandbox entitlement (we
+  already ship sandbox=false). Verify if Phase 6 turns sandbox back on.
+- `CapturePaletteController.show()` calls `NSApp.activate(ignoringOther
+  Apps: true)` so the panel can take key focus. With `.nonactivatingPanel`
+  the *app* won't take focus from the foreground app, but the panel
+  itself becomes key.
+- `NotificationDelegate.userNotificationCenter(_:willPresent:)` returns
+  `[.banner, .sound]` — we want banners to render even when Moves is
+  foregrounded, since the only "foreground" surface is often the
+  menu-bar popover.
+
 ## 2026-06-08 — Phase 1 gate (toms-laws): A+B applied
 
 Reviewed Phase 1 against Thomas' Laws. Three real findings, one drop. Applied

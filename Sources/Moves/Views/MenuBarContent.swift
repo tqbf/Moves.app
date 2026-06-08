@@ -41,9 +41,15 @@ struct MenuBarContent: View {
       Text("Moves")
         .font(.headline)
       Spacer()
-      Text("\(store.activeCount) active")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      if store.dueOrOverdueHardCount > 0 {
+        Text("•\(store.dueOrOverdueHardCount) due")
+          .font(.caption.weight(.medium))
+          .foregroundStyle(.orange)
+      } else {
+        Text("\(store.activeCount) active")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
