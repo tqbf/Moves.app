@@ -74,6 +74,24 @@ if [[ -n "$PROVISION_PROFILE" && -f "$PROVISION_PROFILE" ]]; then
 fi
 
 echo "→ codesign (identity: $SIGN_IDENTITY)"
+
+# Nested SwiftPM resource bundles must be signed BEFORE the outer .app
+# (innermost-first per Apple's signing rules). Without this, the hardened
+# runtime + library validation reject the bundle at load time — the
+# `Bundle.module` lookup succeeds but the resource access trips an
+# `_assertionFailure` on macOS 14.x. `--deep` would work but is
+# deprecated; explicit nested signing is the supported path.
+NESTED_SIGN_ARGS=(--force --sign "$SIGN_IDENTITY")
+if [[ "$CONFIG" == "release" ]]; then
+    NESTED_SIGN_ARGS+=(--options runtime --timestamp)
+fi
+shopt -s nullglob
+for nested in "$APP_PATH"/Contents/Resources/*.bundle; do
+    codesign "${NESTED_SIGN_ARGS[@]}" "$nested"
+    echo "  + signed $(basename "$nested")"
+done
+shopt -u nullglob
+
 CODESIGN_ARGS=(--force --sign "$SIGN_IDENTITY")
 if [[ "$CONFIG" == "release" ]]; then
     CODESIGN_ARGS+=(--options runtime --timestamp)
