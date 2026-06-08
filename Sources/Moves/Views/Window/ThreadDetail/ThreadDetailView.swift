@@ -137,6 +137,12 @@ struct ThreadDetailView: View {
         VStack(spacing: 0) {
           ForEach(items) { item in
             ItemRow(item: item, onToggle: { Task { await toggle(item) } })
+              .contextMenu {
+                Button("Delete", role: .destructive) {
+                  store.deleteItem(item)
+                  items.removeAll { $0.id == item.id }
+                }
+              }
             if item.id != items.last?.id {
               Divider().padding(.leading, 30)
             }

@@ -2,6 +2,64 @@
 
 Newest first.
 
+## 2026-06-08 — Swipe-left to delete on every main-window list
+
+Every list pane in the main window now uses a native `List` with
+`.swipeActions(edge: .trailing)` carrying a destructive "Delete"
+button — the standard macOS swipe-left affordance. Previously each
+pane built its rows as `VStack { ForEach } .background(rounded)`,
+which looks like a ported Qt dashboard and (more importantly) doesn't
+honor `.swipeActions` — that modifier only works inside `List`/`Form`.
+
+What changed:
+
+- **`PaneShell.swift`** — added a `PaneListShell` variant that renders
+  the title/subtitle block above the content but does NOT wrap content
+  in a `ScrollView`. Lists provide their own scrolling. The original
+  `PaneShell` is unchanged so non-list panes (Current detail, Time
+  Log) keep their existing behavior. Both shells share a private
+  `PaneHeader` so typography can't drift.
+- **`AvailableView.swift`** — `List` with two `Section`s (visible +
+  "De-emphasized during working hours"); each row carries
+  `.swipeActions { Delete → store.delete(row.thread) }`.
+- **`ThreadsListView.swift`** — `List` with three sections (Active /
+  Parked / Done). The inline "New thread…" row sits as a card above
+  the List so it can keep the field-shaped chrome. Each row has the
+  pre-existing context-menu plus a swipe-action Delete.
+- **`CapturedView.swift`** — `List` of `CapturedRow`s with
+  `.swipeActions { Delete → store.deleteItem(item) }`.
+- **`DeadlinesView.swift`** — `List` of items with the same swipe
+  behavior.
+- **`ParkingLotView.swift`** — `List` of parked threads with
+  swipe-Delete (the "Unpark" + "Open" buttons stay as trailing
+  inline controls).
+- **`ThreadDetailView.swift`** — items checklist sits inside a
+  surrounding `ScrollView` (notes editor + breadcrumb editor live in
+  the same scroll), so a nested `List` would compose badly. Items
+  got a `.contextMenu { Delete }` instead — the standard fallback
+  affordance when `.swipeActions` isn't available. Right-click any
+  item to delete.
+- **`AppStore.deleteItem(_:)`** — new generic delete that handles
+  items across captured + thread-attached + deadlined caches in one
+  call, cancels any pending notification, and rebuilds Available so
+  §22's "no re-entry = no Available" stays coherent when an item's
+  removal drops a thread off the list. The pre-existing
+  `deleteCapturedItem` now delegates to it.
+
+All four `List` panes use `.listStyle(.inset)` (the modern macOS
+default, matching Mail / Reminders / Notes) and
+`.scrollContentBackground(.hidden)` so the list blends with the
+window background rather than carrying its own opaque chrome.
+
+Tests unchanged (164/164 green). The swipe gesture is the system
+trackpad two-finger swipe-left — not driveable by mouse — so the
+end-to-end visual gate verified row rendering + the right-click
+context-menu Delete path; the swipe path itself was confirmed by
+code review (`.swipeActions` modifier wired with a destructive
+button targeting the same `store.delete*` calls the context menu
+uses).
+
+
 ## 2026-06-08 — Settings is now a system Settings scene (Cmd-,)
 
 Pulled the sidebar Settings destination out of the main window. Moves

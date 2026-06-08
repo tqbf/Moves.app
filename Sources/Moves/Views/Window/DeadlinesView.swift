@@ -2,7 +2,7 @@ import SwiftUI
 
 /// "Deadlines" pane in the main window (INITIAL-PLAN §4.2). One list of
 /// every item with a `due_at`, sorted ascending. Overdue rows render
-/// muted-orange; future rows are neutral.
+/// muted-orange; future rows are neutral. Swipe-left to delete.
 ///
 /// This is the "what's coming up?" view — the popover Upcoming section is
 /// scoped to hard-only items; this pane shows everything with a deadline
@@ -11,7 +11,10 @@ struct DeadlinesView: View {
   @Environment(AppStore.self) private var store
 
   var body: some View {
-    PaneShell(title: "Deadlines", subtitle: "\(store.deadlineItems.count) deadlined item\(store.deadlineItems.count == 1 ? "" : "s")") {
+    PaneListShell(
+      title: "Deadlines",
+      subtitle: "\(store.deadlineItems.count) deadlined item\(store.deadlineItems.count == 1 ? "" : "s")"
+    ) {
       if store.deadlineItems.isEmpty {
         ContentUnavailableView(
           "No deadlines",
@@ -19,18 +22,20 @@ struct DeadlinesView: View {
           description: Text("Captures with a date or time show up here.")
         )
       } else {
-        VStack(spacing: 0) {
+        List {
           ForEach(store.deadlineItems) { item in
             DeadlineRow(item: item, threadTitle: threadTitle(for: item))
-            if item.id != store.deadlineItems.last?.id {
-              Divider().padding(.leading, 12)
-            }
+              .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                  store.deleteItem(item)
+                } label: {
+                  Label("Delete", systemImage: "trash")
+                }
+              }
           }
         }
-        .background(
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(.background.secondary)
-        )
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
       }
     }
   }
@@ -74,9 +79,8 @@ private struct DeadlineRow: View {
       }
       Spacer()
     }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.vertical, 4)
+    .contentShape(Rectangle())
   }
 
   private var isOverdue: Bool {

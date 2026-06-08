@@ -2,7 +2,8 @@ import SwiftUI
 
 /// "Threads" pane in the main window (INITIAL-PLAN §4.2). All threads,
 /// grouped by status, with an inline "New thread…" field at the top.
-/// Selecting a row routes to the thread detail.
+/// Selecting a row routes to the thread detail. Swipe-left on a row to
+/// delete the thread.
 ///
 /// This is the editing/organizing entry point — the popover is for daily-
 /// driver flow, this pane is for "give me the whole list".
@@ -14,12 +15,22 @@ struct ThreadsListView: View {
   @FocusState private var addFocused: Bool
 
   var body: some View {
-    PaneShell(title: "Threads", subtitle: "\(store.threads.count) total · \(store.activeCount) active") {
-      newRow
-
-      groupedList(title: "Active", threads: store.threads(matching: .active))
-      groupedList(title: "Parked", threads: store.threads(matching: .parked))
-      groupedList(title: "Done", threads: store.threads(matching: .done))
+    PaneListShell(
+      title: "Threads",
+      subtitle: "\(store.threads.count) total · \(store.activeCount) active"
+    ) {
+      VStack(spacing: 0) {
+        newRow
+          .padding(.horizontal, 28)
+          .padding(.bottom, 6)
+        List {
+          section("Active", threads: store.threads(matching: .active))
+          section("Parked", threads: store.threads(matching: .parked))
+          section("Done", threads: store.threads(matching: .done))
+        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+      }
     }
   }
 
@@ -58,43 +69,35 @@ struct ThreadsListView: View {
     }
   }
 
-  // MARK: - Groups
+  // MARK: - Sections
 
   @ViewBuilder
-  private func groupedList(title: String, threads: [Thread]) -> some View {
+  private func section(_ title: String, threads: [Thread]) -> some View {
     if !threads.isEmpty {
-      VStack(alignment: .leading, spacing: 6) {
-        Text(title)
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.tertiary)
-          .textCase(.uppercase)
-          .kerning(0.5)
-        VStack(spacing: 0) {
-          ForEach(threads) { thread in
-            ThreadRowSummary(thread: thread, action: { onSelectThread(thread.id) })
-              .contextMenu {
-                Button("Open") { onSelectThread(thread.id) }
-                Divider()
-                Button("Mark Active") { store.setStatus(thread, to: .active) }
-                  .disabled(thread.status == .active)
-                Button("Park") { store.setStatus(thread, to: .parked) }
-                  .disabled(thread.status == .parked)
-                Button("Mark Done") { store.setStatus(thread, to: .done) }
-                  .disabled(thread.status == .done)
-                Divider()
-                Button("Delete", role: .destructive) { store.delete(thread) }
-              }
-            if thread.id != threads.last?.id {
-              Divider().padding(.leading, 12)
+      Section(title) {
+        ForEach(threads) { thread in
+          ThreadRowSummary(thread: thread, action: { onSelectThread(thread.id) })
+            .contextMenu {
+              Button("Open") { onSelectThread(thread.id) }
+              Divider()
+              Button("Mark Active") { store.setStatus(thread, to: .active) }
+                .disabled(thread.status == .active)
+              Button("Park") { store.setStatus(thread, to: .parked) }
+                .disabled(thread.status == .parked)
+              Button("Mark Done") { store.setStatus(thread, to: .done) }
+                .disabled(thread.status == .done)
+              Divider()
+              Button("Delete", role: .destructive) { store.delete(thread) }
             }
-          }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+              Button(role: .destructive) {
+                store.delete(thread)
+              } label: {
+                Label("Delete", systemImage: "trash")
+              }
+            }
         }
-        .background(
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(.background.secondary)
-        )
       }
-      .padding(.top, 6)
     }
   }
 }
@@ -102,7 +105,6 @@ struct ThreadsListView: View {
 private struct ThreadRowSummary: View {
   let thread: Thread
   let action: () -> Void
-  @State private var hovering = false
 
   var body: some View {
     Button(action: action) {
@@ -122,14 +124,11 @@ private struct ThreadRowSummary: View {
           .foregroundStyle(.tertiary)
           .monospaced()
       }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 10)
+      .padding(.vertical, 4)
       .frame(maxWidth: .infinity, alignment: .leading)
       .contentShape(Rectangle())
-      .background(hovering ? Color.primary.opacity(0.05) : Color.clear)
     }
     .buttonStyle(.plain)
-    .onHover { hovering = $0 }
   }
 
   private var secondaryLine: String {

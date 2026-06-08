@@ -10,13 +10,14 @@ import SwiftUI
 ///
 /// Click a row → navigate to the thread detail. Switching is not done
 /// from this pane; that flow lives in the popover (where it's a one-click
-/// affordance during active work).
+/// affordance during active work). Swipe-left on a row to delete the
+/// underlying thread.
 struct AvailableView: View {
   @Environment(AppStore.self) private var store
   var onSelectThread: (String) -> Void
 
   var body: some View {
-    PaneShell(title: "Available", subtitle: subtitle) {
+    PaneListShell(title: "Available", subtitle: subtitle) {
       let filtered = filtered()
       if filtered.visible.isEmpty, filtered.deemphasized.isEmpty {
         ContentUnavailableView(
@@ -25,18 +26,24 @@ struct AvailableView: View {
           description: Text("Add a breadcrumb to a thread, or capture a reminder.")
         )
       } else {
-        if !filtered.visible.isEmpty {
-          rowGroup(filtered.visible, deemphasized: false)
+        List {
+          if !filtered.visible.isEmpty {
+            Section {
+              ForEach(filtered.visible) { row in
+                rowView(row, deemphasized: false)
+              }
+            }
+          }
+          if !filtered.deemphasized.isEmpty {
+            Section("De-emphasized during working hours") {
+              ForEach(filtered.deemphasized) { row in
+                rowView(row, deemphasized: true)
+              }
+            }
+          }
         }
-        if !filtered.deemphasized.isEmpty {
-          Text("De-emphasized during working hours")
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.tertiary)
-            .textCase(.uppercase)
-            .kerning(0.5)
-            .padding(.top, 8)
-          rowGroup(filtered.deemphasized, deemphasized: true)
-        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
       }
     }
   }
@@ -57,21 +64,18 @@ struct AvailableView: View {
     )
   }
 
-  private func rowGroup(_ rows: [AvailableThread], deemphasized: Bool) -> some View {
-    VStack(spacing: 0) {
-      ForEach(rows) { row in
-        AvailableRow(item: row, deemphasized: deemphasized) {
-          onSelectThread(row.thread.id)
-        }
-        if row.id != rows.last?.id {
-          Divider().padding(.leading, 12)
-        }
+  @ViewBuilder
+  private func rowView(_ row: AvailableThread, deemphasized: Bool) -> some View {
+    AvailableRow(item: row, deemphasized: deemphasized) {
+      onSelectThread(row.thread.id)
+    }
+    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+      Button(role: .destructive) {
+        store.delete(row.thread)
+      } label: {
+        Label("Delete", systemImage: "trash")
       }
     }
-    .background(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(.background.secondary)
-    )
   }
 }
 
@@ -79,7 +83,6 @@ private struct AvailableRow: View {
   let item: AvailableThread
   let deemphasized: Bool
   let action: () -> Void
-  @State private var hovering = false
 
   var body: some View {
     Button(action: action) {
@@ -100,13 +103,10 @@ private struct AvailableRow: View {
           .foregroundStyle(.tertiary)
           .monospaced()
       }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 10)
+      .padding(.vertical, 4)
       .frame(maxWidth: .infinity, alignment: .leading)
       .contentShape(Rectangle())
-      .background(hovering ? Color.primary.opacity(0.05) : Color.clear)
     }
     .buttonStyle(.plain)
-    .onHover { hovering = $0 }
   }
 }

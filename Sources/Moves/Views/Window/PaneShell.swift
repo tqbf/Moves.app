@@ -17,15 +17,7 @@ struct PaneShell<Content: View>: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(title)
-            .font(.system(size: 24, weight: .semibold))
-          if let subtitle, !subtitle.isEmpty {
-            Text(subtitle)
-              .font(.system(size: 13))
-              .foregroundStyle(.secondary)
-          }
-        }
+        PaneHeader(title: title, subtitle: subtitle)
         content()
         Spacer(minLength: 0)
       }
@@ -34,5 +26,50 @@ struct PaneShell<Content: View>: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+}
+
+/// Variant of `PaneShell` for panes whose body is a `List` (or starts
+/// with one). The header sits above the list at the same horizontal inset
+/// as `PaneShell`; the list provides its own scrolling and renders the
+/// macOS-native row separators + swipe-action chrome.
+///
+/// Use `PaneListShell` whenever the pane wants per-row swipe-to-delete —
+/// `.swipeActions` is only honored inside `List`/`Form`, not a plain
+/// `VStack { ForEach }`.
+struct PaneListShell<Content: View>: View {
+  let title: String
+  var subtitle: String?
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      PaneHeader(title: title, subtitle: subtitle)
+        .padding(.horizontal, 28)
+        .padding(.top, 24)
+        .padding(.bottom, 12)
+      content()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+}
+
+/// Shared title/subtitle block. Pulled out of both shells so the typography
+/// can't drift between scrollable and list-hosted panes.
+private struct PaneHeader: View {
+  let title: String
+  let subtitle: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+        .font(.system(size: 24, weight: .semibold))
+      if let subtitle, !subtitle.isEmpty {
+        Text(subtitle)
+          .font(.system(size: 13))
+          .foregroundStyle(.secondary)
+      }
+    }
   }
 }

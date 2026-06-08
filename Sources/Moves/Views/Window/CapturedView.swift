@@ -2,12 +2,16 @@ import SwiftUI
 
 /// "Captured" pane in the main window (INITIAL-PLAN §4.2, §13). All
 /// captured-status items — the inbox. Processing actions live on each
-/// row's context menu / overflow menu (`CapturedRow`).
+/// row's context menu / overflow menu (`CapturedRow`). Swipe-left on a
+/// row reveals a destructive Delete button.
 struct CapturedView: View {
   @Environment(AppStore.self) private var store
 
   var body: some View {
-    PaneShell(title: "Captured", subtitle: "\(store.capturedItems.count) item\(store.capturedItems.count == 1 ? "" : "s")") {
+    PaneListShell(
+      title: "Captured",
+      subtitle: "\(store.capturedItems.count) item\(store.capturedItems.count == 1 ? "" : "s")"
+    ) {
       if store.capturedItems.isEmpty {
         ContentUnavailableView(
           "Inbox is empty",
@@ -15,18 +19,20 @@ struct CapturedView: View {
           description: Text("Hit ⌥Space to capture a reminder, task, or note.")
         )
       } else {
-        VStack(spacing: 0) {
+        List {
           ForEach(store.capturedItems) { item in
             CapturedRow(item: item)
-            if item.id != store.capturedItems.last?.id {
-              Divider().padding(.leading, 12)
-            }
+              .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                  store.deleteItem(item)
+                } label: {
+                  Label("Delete", systemImage: "trash")
+                }
+              }
           }
         }
-        .background(
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(.background.secondary)
-        )
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
       }
     }
   }

@@ -818,12 +818,29 @@ final class AppStore {
 
   /// Delete a captured item by ID.
   func deleteCapturedItem(_ item: Item) {
+    deleteItem(item)
+  }
+
+  /// Delete any item (captured, thread-attached, or deadlined). Wired up
+  /// for the swipe-to-delete affordance on every main-window list. Removes
+  /// it from every in-memory cache it might be in, cancels any pending
+  /// notification, and asks the repo to drop the row.
+  func deleteItem(_ item: Item) {
+    // `deadlineItems` is a computed projection over `capturedItems` +
+    // `openItemsByThread` — removing from those two sources is enough.
     capturedItems.removeAll { $0.id == item.id }
+    if let threadId = item.threadId {
+      openItemsByThread[threadId]?.removeAll { $0.id == item.id }
+    }
     Task { [itemRepository, reminderScheduler, id = item.id] in
       await reminderScheduler?.cancelPending(itemId: id)
       do { try await itemRepository.delete(id: id) }
       catch { self.report("Item delete failed: \(error)") }
       await self.refreshDueCount()
+      // Available may flip (a thread whose only re-entry point was this
+      // item now has none) — rebuild so the Available pane / sidebar
+      // badge stay coherent.
+      await self.rebuildAvailable()
     }
   }
 

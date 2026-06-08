@@ -2,14 +2,17 @@ import SwiftUI
 
 /// "Parking Lot" pane in the main window (INITIAL-PLAN §4.2). Lists every
 /// parked thread, with an "Unpark" button per row that flips status back
-/// to active.
+/// to active and a leading swipe-to-delete affordance.
 struct ParkingLotView: View {
   @Environment(AppStore.self) private var store
   var onSelectThread: (String) -> Void
 
   var body: some View {
     let parked = store.threads(matching: .parked)
-    PaneShell(title: "Parking Lot", subtitle: "\(parked.count) parked thread\(parked.count == 1 ? "" : "s")") {
+    PaneListShell(
+      title: "Parking Lot",
+      subtitle: "\(parked.count) parked thread\(parked.count == 1 ? "" : "s")"
+    ) {
       if parked.isEmpty {
         ContentUnavailableView(
           "Nothing parked",
@@ -17,18 +20,20 @@ struct ParkingLotView: View {
           description: Text("Parked threads show up here. Unpark to bring one back to Available.")
         )
       } else {
-        VStack(spacing: 0) {
+        List {
           ForEach(parked) { thread in
             ParkedRow(thread: thread, onOpen: { onSelectThread(thread.id) })
-            if thread.id != parked.last?.id {
-              Divider().padding(.leading, 12)
-            }
+              .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                  store.delete(thread)
+                } label: {
+                  Label("Delete", systemImage: "trash")
+                }
+              }
           }
         }
-        .background(
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(.background.secondary)
-        )
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
       }
     }
   }
@@ -38,7 +43,6 @@ private struct ParkedRow: View {
   let thread: Thread
   let onOpen: () -> Void
   @Environment(AppStore.self) private var store
-  @State private var hovering = false
 
   var body: some View {
     HStack(spacing: 12) {
@@ -59,10 +63,7 @@ private struct ParkedRow: View {
       Button("Open") { onOpen() }
         .buttonStyle(.bordered)
     }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(hovering ? Color.primary.opacity(0.04) : Color.clear)
-    .onHover { hovering = $0 }
+    .padding(.vertical, 4)
+    .contentShape(Rectangle())
   }
 }
