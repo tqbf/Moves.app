@@ -2,6 +2,67 @@
 
 Newest first.
 
+## 2026-06-08 — capture-palette UX + onboarding auto-finish
+
+Two user-reported bugs against the Phase-6 surface, both of which
+turned out to be UX gaps masquerading as functional ones — captures
+without a deadline always saved, and the onboarding Done button always
+worked, but neither was discoverable enough for the user to trust it.
+
+What changed:
+
+- **`CapturePaletteView.swift`** — the live-parse preview no longer
+  buries the deadline in a single tertiary-grey line. The parsed title
+  renders in secondary text with a leading "↪" arrow; a recognized
+  deadline appears as an accent-tinted pill (orange `bell.fill` for
+  hard, accent `calendar` for soft) carrying the formatted time; when
+  no deadline is recognized, the row reads "↪ title · saves as a
+  capture" with a trailing ⏎ glyph so the user knows Return persists
+  regardless. The post-save confirmation now leads with a green
+  `checkmark.circle.fill` + "Saved <title>" plus the chip if one
+  applied, instead of a one-line "Saved capture: …" in secondary text.
+- **`CapturePaletteController.show()`** — replaces the panel's hosting
+  controller's root view on each show. The previous code reused the
+  same SwiftUI subtree across `orderOut` / `orderFront` cycles, so a
+  stale "Saved buy bread" line bled into the next capture session and
+  any leftover `draft` text persisted between opens. Rebuilding the
+  root view on show forces SwiftUI to mount the view fresh, which
+  re-fires `onAppear` (draft = "", lastSaved = nil, fieldFocused = true).
+- **`OnboardingView.swift`** — the "Try a capture" step now
+  auto-finishes 700 ms after a successful capture (the dwell lets the
+  user see the green "Saved" confirmation). The previous flow required
+  the user to find the "Done" button after pressing Return; users
+  treated Return-to-save as the natural end of the step and reported
+  the screen as "stuck" because the Done button never got their
+  attention. `finish()` also gained a belt-and-suspenders pass that
+  walks `NSApplication.shared.windows` for the onboarding identifier
+  and calls `.close()` — `dismissWindow(id:)` can occasionally no-op
+  if the window isn't key at call time, and the user's session
+  reported exactly that symptom. The earlier copy ("Type something
+  you don't want to lose — a reminder, a task, anything. Hit Return
+  to save it.") gained "A deadline is optional." so the user knows
+  up front that a deadline isn't required.
+
+Phase-6 invariants honored:
+
+- Capture parser unchanged. Deterministic grammar, same accepted
+  forms, same `due_at` / `due_kind` / `interruption_kind` outputs —
+  only the rendering of those outputs changed.
+- `AppStore.capture` unchanged. No-deadline captures always saved
+  (the bug was perceived, not real); the new UX makes that obvious.
+- Onboarding marker logic unchanged. `markOnboardingComplete()` still
+  writes the `onboarded_version` row; the auto-finish path runs the
+  same code as a manual Done click.
+
+`make check` + `make test` green (164/164). End-to-end visual gate:
+captured a deadline-bearing item ("pull rice in 18m") and confirmed
+the orange bell pill renders; captured a no-deadline item ("buy
+bread") and confirmed the "saves as a capture" hint + successful
+persist (count incremented); walked the onboarding flow with a
+no-deadline first capture and confirmed the screen auto-dismissed
+700 ms after Return without any further click.
+
+
 ## 2026-06-08 — SwiftPM `Bundle.module` macOS 14 crash (workaround landed)
 
 Reported crash on macOS 14 when the onboarding hotkey-recorder

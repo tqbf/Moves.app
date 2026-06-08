@@ -1,3 +1,4 @@
+import AppKit
 import KeyboardShortcuts
 import SwiftUI
 
@@ -185,7 +186,7 @@ struct OnboardingView: View {
       Text("Capture your first item.")
         .font(.title3)
         .fontWeight(.semibold)
-      Text("Type something you don’t want to lose — a reminder, a task, anything. Hit Return to save it.")
+      Text("Type something you don’t want to lose — a reminder, a task, anything. Hit Return to save it. A deadline is optional.")
         .font(.body)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -196,7 +197,7 @@ struct OnboardingView: View {
         .disabled(didCapture)
         .accessibilityLabel("First capture")
       if didCapture {
-        Label("Saved. You can find it in the Captured list.", systemImage: "checkmark.circle.fill")
+        Label("Saved. Finishing up…", systemImage: "checkmark.circle.fill")
           .foregroundStyle(.green)
           .font(.callout)
       } else {
@@ -265,10 +266,16 @@ struct OnboardingView: View {
 
   private func saveFirstCapture() {
     let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !input.isEmpty else { return }
+    guard !input.isEmpty, !didCapture else { return }
     Task {
       _ = await store.capture(input)
       didCapture = true
+      // Auto-advance after a brief dwell so the user sees the "Saved"
+      // confirmation. Removes the "find the Done button" gap that made
+      // the previous flow feel stuck for users who treated Return-to-save
+      // as the natural end of this step.
+      try? await Task.sleep(nanoseconds: 700_000_000)
+      await finish()
     }
   }
 
@@ -276,5 +283,13 @@ struct OnboardingView: View {
     await store.markOnboardingComplete()
     OnboardingPresenter.shared.dismiss()
     dismissWindow(id: PopoverWindowID.onboarding.rawValue)
+    // Belt-and-suspenders: dismissWindow can occasionally no-op if the
+    // window isn't key, leaving the onboarding visible while every other
+    // state has been cleaned up. Close the underlying NSWindow directly
+    // so the user never gets stuck on this screen.
+    for window in NSApplication.shared.windows
+      where window.identifier?.rawValue == PopoverWindowID.onboarding.rawValue {
+      window.close()
+    }
   }
 }

@@ -28,19 +28,22 @@ struct CapturePaletteView: View {
         .focused($fieldFocused)
         .onSubmit(save)
 
-      // Confirm line + live parse preview. Heaviest visual emphasis is on
-      // the last-saved confirm; the live preview is muted.
+      // Status line. Three states:
+      //   • Just saved: green checkmark + "Saved <title>" (briefly visible
+      //     before the panel auto-dismisses).
+      //   • Typing with a parsed deadline: title preview + an accent-tinted
+      //     chip carrying the parsed time. The chip is the visual signal
+      //     that a deadline was recognized — captures save with or without
+      //     one, but the chip removes any doubt about whether the parser
+      //     picked up the time phrase the user typed.
+      //   • Typing without a parsed deadline: subtle "Saves as a capture"
+      //     hint so the user knows Return will still persist the item.
       Group {
         if let lastSaved {
-          Text("Saved \(describe(lastSaved))")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.secondary)
+          savedLine(for: lastSaved)
             .transition(.opacity)
         } else if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
-          let preview = CaptureParser.parse(draft, now: Date())
-          Text(previewLine(for: preview))
-            .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(.tertiary)
+          previewRow(for: CaptureParser.parse(draft, now: Date()))
         } else if store.notificationsDenied {
           Label("Alerts disabled in System Settings — captures will still save", systemImage: "bell.slash")
             .font(.system(size: 11, weight: .regular))
@@ -93,19 +96,73 @@ struct CapturePaletteView: View {
 
   // MARK: - Display helpers
 
-  private func describe(_ parsed: ParsedCapture) -> String {
-    if let due = parsed.dueAt {
-      return "reminder: \(parsed.title) — \(Self.formatter.string(from: due))"
+  /// "Saved" confirmation row, shown briefly before the panel dismisses.
+  /// Uses a green check + the saved title so the user has clear feedback
+  /// that the capture persisted, regardless of whether a deadline was parsed.
+  @ViewBuilder
+  private func savedLine(for parsed: ParsedCapture) -> some View {
+    HStack(spacing: 6) {
+      Image(systemName: "checkmark.circle.fill")
+        .foregroundStyle(.green)
+      Text("Saved")
+        .fontWeight(.medium)
+      Text(parsed.title)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      if let due = parsed.dueAt {
+        deadlineChip(for: due, kind: parsed.interruptionKind)
+      }
     }
-    return "capture: \(parsed.title)"
+    .font(.system(size: 12))
   }
 
-  private func previewLine(for parsed: ParsedCapture) -> String {
-    if let due = parsed.dueAt {
-      let kind = parsed.interruptionKind == .hard ? "hard" : "soft"
-      return "→ \(parsed.title) · \(Self.formatter.string(from: due)) · \(kind)"
+  /// Live preview row while the user is typing. Title on the left, an
+  /// accent-tinted deadline chip on the right when one was recognized.
+  /// The "no deadline" wording is gone — the absence of a chip is the
+  /// signal, and the trailing hint explicitly states the item will save.
+  @ViewBuilder
+  private func previewRow(for parsed: ParsedCapture) -> some View {
+    HStack(spacing: 6) {
+      Image(systemName: "arrow.turn.down.right")
+        .foregroundStyle(.tertiary)
+      Text(parsed.title.isEmpty ? "(enter a title)" : parsed.title)
+        .foregroundStyle(parsed.title.isEmpty ? .tertiary : .secondary)
+        .lineLimit(1)
+      if let due = parsed.dueAt {
+        deadlineChip(for: due, kind: parsed.interruptionKind)
+      } else {
+        Text("· saves as a capture")
+          .foregroundStyle(.tertiary)
+      }
+      Spacer(minLength: 4)
+      Text("⏎")
+        .foregroundStyle(.tertiary)
     }
-    return "→ \(parsed.title) · no deadline"
+    .font(.system(size: 12))
+  }
+
+  /// Tinted pill displaying the parsed deadline + interruption kind.
+  /// `.hard` uses orange (matches the menubar badge for due/overdue hard
+  /// items); `.soft` uses accent. The pill IS the visual indication that
+  /// a deadline was recognized — it's the difference between a quiet
+  /// "no deadline" line the user can miss and an unmistakable "yes, I
+  /// got that the deadline is X" signal.
+  @ViewBuilder
+  private func deadlineChip(for due: Date, kind: InterruptionKind) -> some View {
+    let tint: Color = (kind == .hard) ? .orange : .accentColor
+    HStack(spacing: 4) {
+      Image(systemName: kind == .hard ? "bell.fill" : "calendar")
+        .font(.system(size: 10, weight: .semibold))
+      Text(Self.formatter.string(from: due))
+        .font(.system(size: 11, weight: .medium))
+    }
+    .padding(.horizontal, 7)
+    .padding(.vertical, 2)
+    .foregroundStyle(tint)
+    .background(
+      Capsule(style: .continuous)
+        .fill(tint.opacity(0.15))
+    )
   }
 
   /// Short relative-style date formatter — "today 4:00 PM", "Fri 5:00 PM",
@@ -141,11 +198,20 @@ final class CapturePaletteController {
     show()
   }
 
-  /// Show the palette and focus its text field.
+  /// Show the palette and focus its text field. Replaces the hosting
+  /// controller's root view on each show so the palette always opens with
+  /// an empty draft and no leftover "Saved …" confirmation. Without this
+  /// reset, the view's `@State` survives `orderOut`/`orderFront` cycles
+  /// (the SwiftUI subtree never unmounts) and a previous capture's
+  /// confirm line bleeds into the next session.
   func show() {
     guard let store else { return }
     let panel = window ?? makeWindow(store: store)
     self.window = panel
+    panel.contentViewController = NSHostingController(
+      rootView: CapturePaletteView(onDismiss: { [weak self] in self?.close() })
+        .environment(store)
+    )
     panel.center()
     NSApp.activate(ignoringOtherApps: true)
     panel.makeKeyAndOrderFront(nil)
