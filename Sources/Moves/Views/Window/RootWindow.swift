@@ -67,7 +67,6 @@ struct RootWindow: View {
         // never "unread" in a way that should pull the user's attention,
         // per the §2.5 "no shame language" rule.
         sidebarRow(.timeLog, "Time Log", icon: "clock.arrow.circlepath", badge: 0)
-        sidebarRow(.settings, "Settings", icon: "gearshape", badge: 0)
       }
     }
     .listStyle(.sidebar)
@@ -151,8 +150,6 @@ struct RootWindow: View {
       ParkingLotView(onSelectThread: routeToThread)
     case .timeLog:
       WeeklyView()
-    case .settings:
-      SettingsView()
     }
   }
 

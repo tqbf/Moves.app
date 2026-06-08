@@ -148,6 +148,14 @@ struct MovesApp: App {
     .windowResizability(.contentSize)
     .defaultPosition(.center)
 
+    // System Settings scene. Wires Cmd-, and the standard "Moves →
+    // Settings…" menu item automatically — the idiomatic macOS surface
+    // for app preferences. No sidebar destination in the main window.
+    Settings {
+      SettingsView()
+        .environment(store)
+    }
+
     MenuBarExtra {
       MenuPopoverView()
         .environment(store)

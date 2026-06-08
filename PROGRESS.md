@@ -2,6 +2,43 @@
 
 Newest first.
 
+## 2026-06-08 — Settings is now a system Settings scene (Cmd-,)
+
+Pulled the sidebar Settings destination out of the main window. Moves
+now uses SwiftUI's `Settings { ... }` scene, which gives:
+
+- **Cmd-,** as the standard binding (no manual menu wiring).
+- The standard **Moves → Settings…** menu item (system-supplied).
+- A fixed-size settings window with a tab-bar toolbar — the System
+  Settings idiom on modern macOS, not a sidebar pane that looked like
+  a ported Qt dashboard.
+
+What changed:
+
+- `MovesApp.swift` — added a `Settings { SettingsView() … }` scene.
+- `SidebarDestination.swift` — dropped the `.settings` case.
+- `RootWindow.swift` — removed the Settings sidebar row and the
+  `.settings` detail case. The sidebar's second section now contains
+  Time Log only.
+- `Views/Window/Settings/SettingsView.swift` — rewritten from a single
+  vertical pane of cards into a 4-tab `TabView`: **General** (badge
+  toggle, capture shortcut, "Show onboarding again"), **Working
+  Hours**, **Alerts** (default offsets), **Backup** (SQLite + Markdown
+  export). Each tab is a `Form` with `.formStyle(.grouped)` and
+  `LabeledContent` rows — the System Settings look.
+- Removed the now-dead `AlertOffsetsSection.swift`,
+  `BadgeAndOnboardingSection.swift`, `ExportSection.swift` — their
+  bodies live inline inside the new tab views; the underlying
+  AppStore / ExportService / preference write paths are unchanged.
+
+Behavior unchanged: the working-hours editor saves through
+`AppStore.saveWorkingHours`, the badge toggle and onboarding marker go
+through `saveUserPreferences` / `resetOnboarding`, the export buttons
+hit the same `ExportService` factory. Tests reference none of the
+section views, so the rewrite is purely chrome — `make check` +
+`make test` green (164/164).
+
+
 ## 2026-06-08 — capture-palette UX + onboarding auto-finish
 
 Two user-reported bugs against the Phase-6 surface, both of which
