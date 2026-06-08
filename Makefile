@@ -122,10 +122,25 @@ deps:
 # Build (delegates to ./build.sh: swift build + bundle + codesign)
 # ---------------------------------------------------------------------------
 
-build: deps
+ICON_SCRIPT := scripts/make-icon.swift
+APP_ICON    := build/AppIcon.icns
+
+# App icon: regenerated when the script changes. The script renders the
+# BLACK CHESS KNIGHT (♞, U+265E) at every macOS icon size and iconutil
+# packages them. Output: build/AppIcon.icns, copied into the .app bundle
+# by build.sh.
+$(APP_ICON): $(ICON_SCRIPT)
+	@mkdir -p build
+	@swift $(ICON_SCRIPT)
+	@iconutil -c icns build/AppIcon.iconset -o $(APP_ICON)
+	@echo "✓ $(APP_ICON)"
+
+icon: $(APP_ICON)
+
+build: deps $(APP_ICON)
 	SIGN_IDENTITY="$(DEV_IDENTITY)" PROVISION_PROFILE="$(PROVISION_PROFILE)" ./build.sh $(CONFIG)
 
-release: deps
+release: deps $(APP_ICON)
 	SIGN_IDENTITY="$(DEV_IDENTITY)" PROVISION_PROFILE="$(PROVISION_PROFILE)" ./build.sh release
 
 # Compile-only gate — no .app, no signing. CI / agent verification.

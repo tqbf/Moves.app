@@ -98,20 +98,21 @@ struct MovesApp: App {
       MenuPopoverView()
         .environment(store)
     } label: {
-      // Plain-text "•N" suffix matches INITIAL-PLAN §16's "menu-bar icon may
-      // show a simple badge". SwiftUI's MenuBarExtra label renders the icon
-      // and any sibling Text views in the bar — but Label { Text } icon:
-      // { Image } collapses to just the icon. An HStack keeps both visible.
-      //
-      // The badge count routes through `renderedBadgeCount` which honors
-      // the Phase-6 badge-enable/disable preference. The image always has
-      // an accessibility label so VoiceOver users can identify the
-      // menubar icon.
+      // The menu-bar icon is the BLACK CHESS KNIGHT (U+265E, ♞), drawn
+      // through `Text` so the system can template it for light/dark mode.
+      // Tint flips to red when there's a due/overdue hard item so a
+      // glance at the menu bar conveys urgency without opening the
+      // popover — INITIAL-PLAN §16 ("menu-bar icon may show a simple
+      // badge"). `renderedBadgeCount` honors the Phase-6 badge-enable
+      // preference, so a user who disabled the badge gets the neutral
+      // knight even with deadlines approaching.
       HStack(spacing: 2) {
-        Image(systemName: "figure.walk.motion")
+        Text("\u{265E}")
+          .foregroundStyle(store.renderedBadgeCount > 0 ? Color.red : .primary)
           .accessibilityLabel("Moves")
         if store.renderedBadgeCount > 0 {
-          Text("•\(store.renderedBadgeCount)")
+          Text("\(store.renderedBadgeCount)")
+            .foregroundStyle(.red)
             .accessibilityLabel("\(store.renderedBadgeCount) due or overdue")
         }
       }

@@ -8,6 +8,8 @@
     <string>Moves</string>
     <key>CFBundleExecutable</key>
     <string>Moves</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>org.sockpuppet.Moves</string>
     <key>CFBundleInfoDictionaryVersion</key>
