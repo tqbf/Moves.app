@@ -48,11 +48,42 @@ cp "$INFO_PLIST" "$APP_PATH/Contents/Info.plist"
 # copying them into the .app, `Bundle.module` traps with an
 # `_assertionFailure` on first access — observed on macOS 14.4 when the
 # onboarding sheet renders the hotkey recorder.
+#
+# SwiftPM (Xcode 26 / Swift 6.3) emits a near-empty Info.plist for these
+# resource bundles — just CFBundleDevelopmentRegion. macOS 15+
+# `Bundle.init(url:)` accepts that and returns a usable Bundle. macOS 14
+# rejects it as "not a bundle" and returns nil, so the SwiftPM-generated
+# `Bundle.module` lookup falls through every candidate and fatal-errors.
+# Rewrite the Info.plist with the minimum keys macOS 14 requires.
 SWIFT_BIN_DIR="$(dirname "$BIN_PATH")"
 shopt -s nullglob
 for bundle in "$SWIFT_BIN_DIR"/*.bundle; do
+    name=$(basename "$bundle")
     cp -R "$bundle" "$APP_PATH/Contents/Resources/"
-    echo "  + bundled $(basename "$bundle")"
+    bundle_id="${name%.bundle}"
+    cat > "$APP_PATH/Contents/Resources/$name/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.sockpuppet.Moves.$bundle_id</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$bundle_id</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>
+PLIST
+    echo "  + bundled $name (Info.plist rewritten for macOS 14)"
 done
 shopt -u nullglob
 
