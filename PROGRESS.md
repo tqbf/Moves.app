@@ -2,6 +2,33 @@
 
 Newest first.
 
+## 2026-06-08 — Markdown notes: preview-first, edit on click
+
+Replaced the side-by-side Markdown editor + preview split inside the
+thread-detail notes section. The split read as an IDE pane stapled
+onto the rest of the thread view — monospaced editor on one half,
+rendered output on the other, both fighting for the user's eye every
+time they looked at a thread.
+
+New behavior:
+
+- Default state: rendered Markdown only, sitting in one card. A small
+  pencil icon in the top-right corner is the affordance for editing.
+- Click pencil → flip the same card into the source editor. A blue
+  "Done" pill appears in the same top-right position (also bound to
+  ⌘↩) that flips back to preview.
+- If the source is empty (fresh thread, never had notes), the card
+  starts in editor mode and never shows the pencil — there's nothing
+  to preview, so a button to "view it" would be a no-op.
+- Once content exists, the view picks preview on first appear; the
+  user explicitly opts into edit, and editing persists for the
+  session until they click Done (no auto-snap-back, so a long edit
+  isn't interrupted).
+
+Same Markdown block parser (headings, lists, paragraphs, fenced code)
+— only the chrome around it changed. The narrow-width tabbed picker
+fallback is gone too; the new layout works at any width.
+
 ## 2026-06-08 — Swipe-left to delete on every main-window list
 
 Every list pane in the main window now uses a native `List` with

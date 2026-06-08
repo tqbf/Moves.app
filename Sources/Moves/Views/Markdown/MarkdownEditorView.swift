@@ -1,82 +1,105 @@
 import SwiftUI
 
-/// Plain Markdown editor + live preview (INITIAL-PLAN §17). No rich editing
-/// — the text field stores plain Markdown source; the preview renders it
-/// through `AttributedString(markdown:)`. Code blocks land as monospaced
-/// paragraphs; tables are not supported (v2 candidate, per the Phase-4
-/// plan decision).
+/// Markdown notes view. Defaults to showing the rendered preview with a
+/// small pencil affordance in the top-right corner; clicking the pencil
+/// flips into the editor, where a "Done" button returns to preview. If
+/// the source is empty, the editor is shown directly — there's nothing
+/// to preview yet and forcing the user to click anything to begin
+/// writing would be silly.
 ///
-/// Layout: side-by-side on wide widths, tab-toggleable on narrow widths.
-/// Width breakpoint is 560pt — narrower than that and the side-by-side
-/// columns squeeze. `narrow` is driven by `GeometryReader`, kept local
-/// to this view.
+/// Replaces an earlier side-by-side editor/preview layout, which read as
+/// an IDE pane on top of a notes field — fine for a Markdown demo but
+/// wrong for an app where notes are meant to be read most of the time
+/// and edited occasionally. The split chrome and monospaced editor card
+/// also fought with the rest of the thread-detail surface visually.
 struct MarkdownEditorView: View {
   @Binding var source: String
   var placeholder: String = "Notes…"
 
+  @State private var isEditing: Bool = false
+  @State private var didConfigureMode: Bool = false
+
   var body: some View {
-    GeometryReader { geo in
-      let narrow = geo.size.width < 560
-      Group {
-        if narrow {
-          TabbedLayout(source: $source, placeholder: placeholder)
-        } else {
-          SplitLayout(source: $source, placeholder: placeholder)
-        }
+    Group {
+      if shouldShowEditor {
+        EditorCard(source: $source, placeholder: placeholder)
+          .overlay(alignment: .topTrailing) {
+            doneButton
+          }
+      } else {
+        PreviewCard(source: source)
+          .overlay(alignment: .topTrailing) {
+            editButton
+          }
       }
+    }
+    .onAppear {
+      // Pick the initial mode from the source. With content → preview;
+      // empty → editor. Only runs once per view appearance so the user
+      // can leave the editor open after typing without snapping back.
+      guard !didConfigureMode else { return }
+      didConfigureMode = true
+      isEditing = source.isEmpty
+    }
+  }
+
+  /// We force the editor when source is empty regardless of `isEditing`,
+  /// so the user always lands on a writable surface for a fresh thread.
+  private var shouldShowEditor: Bool {
+    isEditing || source.isEmpty
+  }
+
+  private var editButton: some View {
+    Button {
+      isEditing = true
+    } label: {
+      Image(systemName: "pencil")
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(6)
+        .background(
+          Circle().fill(.background.secondary)
+        )
+        .overlay(
+          Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+    }
+    .buttonStyle(.plain)
+    .padding(10)
+    .help("Edit notes")
+    .accessibilityLabel("Edit notes")
+  }
+
+  /// Only useful when source is non-empty — otherwise there's nothing to
+  /// switch back to (and `shouldShowEditor` would just snap us back into
+  /// the editor anyway).
+  @ViewBuilder
+  private var doneButton: some View {
+    if !source.isEmpty {
+      Button {
+        isEditing = false
+      } label: {
+        Text("Done")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(.white)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 4)
+          .background(
+            Capsule().fill(Color.accentColor)
+          )
+      }
+      .buttonStyle(.plain)
+      .padding(10)
+      .keyboardShortcut(.return, modifiers: [.command])
+      .help("Switch back to preview (⌘↩)")
+      .accessibilityLabel("Done editing")
     }
   }
 }
 
-// MARK: - Split
+// MARK: - Editor card
 
-private struct SplitLayout: View {
-  @Binding var source: String
-  let placeholder: String
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 12) {
-      EditorColumn(source: $source, placeholder: placeholder)
-      Divider()
-      PreviewColumn(source: source)
-    }
-  }
-}
-
-// MARK: - Tabbed (narrow widths)
-
-private struct TabbedLayout: View {
-  @Binding var source: String
-  let placeholder: String
-  @State private var mode: Mode = .edit
-
-  enum Mode: String, CaseIterable, Hashable {
-    case edit, preview
-  }
-
-  var body: some View {
-    VStack(spacing: 8) {
-      Picker("", selection: $mode) {
-        Text("Edit").tag(Mode.edit)
-        Text("Preview").tag(Mode.preview)
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .frame(maxWidth: 220)
-
-      switch mode {
-      case .edit:
-        EditorColumn(source: $source, placeholder: placeholder)
-      case .preview:
-        PreviewColumn(source: source)
-      }
-    }
-  }
-}
-
-// MARK: - Columns
-
-private struct EditorColumn: View {
+private struct EditorCard: View {
   @Binding var source: String
   let placeholder: String
 
@@ -85,7 +108,7 @@ private struct EditorColumn: View {
       TextEditor(text: $source)
         .font(.system(size: 13, design: .monospaced))
         .scrollContentBackground(.hidden)
-        .padding(10)
+        .padding(12)
         .background(
           RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(Color(nsColor: .textBackgroundColor))
@@ -99,32 +122,27 @@ private struct EditorColumn: View {
         Text(placeholder)
           .font(.system(size: 13, design: .monospaced))
           .foregroundStyle(.tertiary)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 14)
+          .padding(.horizontal, 17)
+          .padding(.vertical, 19)
           .allowsHitTesting(false)
       }
     }
-    .frame(minHeight: 180)
+    .frame(minHeight: 220)
   }
 }
 
-private struct PreviewColumn: View {
+// MARK: - Preview card
+
+private struct PreviewCard: View {
   let source: String
 
   var body: some View {
     ScrollView {
-      if source.isEmpty {
-        Text("Nothing to preview yet.")
-          .font(.system(size: 12))
-          .foregroundStyle(.tertiary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      } else {
-        rendered
-          .font(.system(size: 13))
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
+      rendered
+        .font(.system(size: 13))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
     }
-    .padding(10)
     .background(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(.background.secondary)
@@ -133,16 +151,16 @@ private struct PreviewColumn: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
     )
-    .frame(minHeight: 180)
+    .frame(minHeight: 220)
   }
 
-  /// Render the Markdown source into one stacked view. We parse the source
-  /// line-by-line to support headings + lists + paragraphs, because
+  /// Render the Markdown source as one stacked view. We parse line-by-
+  /// line to support headings + lists + paragraphs, because
   /// `AttributedString(markdown:)` with `.full` parsing options handles
-  /// inline syntax but renders block-level constructs as one flat paragraph.
-  /// Phase-4 decision: keep this rendering deliberately simple — headings,
-  /// list items, paragraphs, blank lines. Code fences land as monospaced
-  /// blocks. No tables / images / footnotes; v2 candidate.
+  /// inline syntax but renders block-level constructs as one flat
+  /// paragraph. Phase-4 decision (carried over): keep this rendering
+  /// deliberately simple — headings, list items, paragraphs, blank
+  /// lines, fenced code. No tables / images / footnotes; v2 candidate.
   @ViewBuilder
   private var rendered: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -277,14 +295,12 @@ private struct PreviewColumn: View {
       if ch == "#" { n += 1 } else { break }
     }
     guard (1...6).contains(n) else { return nil }
-    // Must be followed by space or end-of-line.
     let rest = s.dropFirst(n)
     if rest.isEmpty || rest.first == " " { return n }
     return nil
   }
 
   private func listItem(_ raw: String) -> (Int, String)? {
-    // Count leading spaces (2 spaces = 1 indent level).
     var leadingSpaces = 0
     for ch in raw {
       if ch == " " { leadingSpaces += 1 } else { break }
