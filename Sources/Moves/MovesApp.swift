@@ -187,7 +187,7 @@ struct MovesApp: App {
           // flip selection to `.threadsList` and `ThreadsListView` to
           // focus the input on mount.
           NSApp.activate(ignoringOtherApps: true)
-          NewThreadPresenter.shared.request()
+          AppSignals.shared.requestNewThreadFlow()
         }
         .keyboardShortcut("n")
         Button("Capture…") { capturePalette?.show() }
@@ -251,7 +251,7 @@ struct MovesApp: App {
     .defaultPosition(.center)
 
     // Phase-6 onboarding modal. Hosts the OnboardingView and self-opens
-    // when `OnboardingPresenter.shared.presentRequested` flips to true.
+    // when `AppSignals.shared.presentOnboarding` flips to true.
     Window("Welcome to Moves", id: PopoverWindowID.onboarding.rawValue) {
       OnboardingHost()
         .environment(store)
@@ -355,7 +355,7 @@ struct MovesApp: App {
     // popover surfaces a sheet that walks through capture-hotkey
     // registration and a first capture. Re-runnable from Settings.
     if store.preferences.onboardedVersion != UserPreferences.currentOnboardingVersion {
-      OnboardingPresenter.shared.requestPresent()
+      AppSignals.shared.requestOnboarding()
     }
   }
 }

@@ -281,7 +281,7 @@ struct OnboardingView: View {
 
   private func finish() async {
     await store.markOnboardingComplete()
-    OnboardingPresenter.shared.dismiss()
+    AppSignals.shared.dismissOnboarding()
     dismissWindow(id: PopoverWindowID.onboarding.rawValue)
     // Belt-and-suspenders: dismissWindow can occasionally no-op if the
     // window isn't key, leaving the onboarding visible while every other

@@ -13,10 +13,10 @@ struct ThreadsListView: View {
 
   @State private var newTitle: String = ""
   @FocusState private var addFocused: Bool
-  /// Cmd-N from the App-scope menu sets this flag; we focus the inline
-  /// "New thread…" field and clear it so a subsequent Cmd-N (which goes
-  /// false → true again) refocuses cleanly.
-  @Bindable private var newThreadPresenter = NewThreadPresenter.shared
+  /// Cmd-N from the App-scope menu flips `signals.requestNewThread`; we
+  /// focus the inline "New thread…" field and clear the flag so a
+  /// subsequent Cmd-N (which goes false → true again) refocuses cleanly.
+  @Bindable private var signals = AppSignals.shared
 
   var body: some View {
     PaneListShell(
@@ -36,25 +36,25 @@ struct ThreadsListView: View {
         .scrollContentBackground(.hidden)
       }
     }
-    .onChange(of: newThreadPresenter.requestPending) { _, requested in
+    .onChange(of: signals.requestNewThread) { _, requested in
       if requested { focusNewThreadInput() }
     }
     .onAppear {
       // Handle the case where the user fired Cmd-N before this view
       // mounted (e.g. switching from the Available pane). RootWindow
       // flipped selection but left the flag set; pick it up here.
-      if newThreadPresenter.requestPending { focusNewThreadInput() }
+      if signals.requestNewThread { focusNewThreadInput() }
     }
   }
 
   /// Defer the focus assignment one runloop tick so it doesn't race the
   /// TextField's mount (same idiom as `CapturePaletteView.onAppear`).
-  /// Clear the presenter flag once we've taken the signal so a future
-  /// request can refire `.onChange`.
+  /// Clear the signal once we've taken it so a future request can
+  /// refire `.onChange`.
   private func focusNewThreadInput() {
     DispatchQueue.main.async {
       addFocused = true
-      newThreadPresenter.clear()
+      signals.clearNewThreadRequest()
     }
   }
 

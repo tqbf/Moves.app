@@ -9,13 +9,13 @@ import SwiftUI
 struct OnboardingHost: View {
   @Environment(\.dismissWindow) private var dismissWindow
 
-  /// We observe the singleton presenter directly; the host doesn't need
-  /// any other parent state.
-  @Bindable var presenter = OnboardingPresenter.shared
+  /// Observe the shared signal bus directly; the host doesn't need any
+  /// other parent state.
+  @Bindable var signals = AppSignals.shared
 
   var body: some View {
     Group {
-      if presenter.presentRequested {
+      if signals.presentOnboarding {
         OnboardingView()
       } else {
         // SwiftUI restored this scene without the presenter flag —
