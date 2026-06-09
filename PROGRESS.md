@@ -2,6 +2,40 @@
 
 Newest first.
 
+## 2026-06-08 — Available pane layout fix
+
+Thomas flagged "the Available pane still isn't aligned and it doesn't
+make sense how it's laid out". Two root causes:
+
+1. `AvailableView` was emitting `workingStatus` and the `List` as two
+   sibling views directly inside `PaneListShell { ... }`. `PaneListShell`
+   applies `.frame(maxHeight: .infinity, alignment: .topLeading)` to its
+   `content()` builder, which the TupleView propagates to each child —
+   both became greedy in the enclosing VStack and split available
+   vertical space. The List ended up sitting in the lower half of the
+   pane with a huge mysterious gap above it. Same fix
+   `ThreadsListView` already had: wrap the body in an inner `VStack
+   (spacing: 0) { … }` so the two children share a single greedy slot
+   with intrinsic heights.
+2. The visible-rows `Section { ForEach }` had no header but was still
+   spending an inset-list Section header gap. Dropped the wrapper so
+   the visible rows render flat (the "De-emphasized during working
+   hours" subsection keeps its own meaningful header).
+
+While in the file: moved the "Working: yes/no" pill into a
+`.safeAreaInset(edge: .bottom)` footer with `.bar` material. Reads as
+a chrome status chip (Mail's connection footer / Reminders'
+completion-summary pattern) rather than competing with the row list
+for top-of-pane attention. Typography moved to semantic `.caption` /
+`.caption2.weight(.semibold)`. Row leading inset 28 → 20 to match the
+macOS inset-list default. Copy nudged from "Working" → "Working
+hours" so the meaning is unambiguous at the footer.
+
+`make check` + `make test` green (174/174). Visual gate against
+build/Moves.app via computer-use: single-row Available pane now shows
+"Test thread" at the top of the list area and "Working hours: no"
+sitting on a thin bar at the bottom — no mystery gap.
+
 ## 2026-06-08 — deadline alerts: macos-design + swiftui-pro tightening
 
 Final polish pass over the three new surfaces (chip row, capture palette

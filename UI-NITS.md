@@ -9,6 +9,48 @@ and the **concrete change** that landed. Group entries by theme.
 
 ---
 
+## A `PaneListShell` host with multiple sibling views distributes height
+
+**Observation.** "the Available pane still isn't aligned and it doesn't
+make sense how it's laid out". The pane showed "Working: no" at the top
+and the single available row pushed to the bottom-third of the pane,
+with a huge mysterious gap between them.
+
+**Rule.** `PaneListShell` applies
+`.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)`
+to its `content()` builder. When the caller emits **two siblings** in the
+builder (e.g. a header view AND a List), SwiftUI wraps them in a TupleView
+and applies the modifier to each child. Inside the shell's enclosing
+VStack, both children become greedy and split available vertical space —
+the header pins to its top alignment, the List pins to its top
+alignment, but the VStack hands each ~half the height, so the List sits
+in the lower half. Wrapping the two siblings in an inner `VStack(spacing:
+0) { … }` collapses them into a single greedy child, letting intrinsic
+heights flow normally.
+
+**Landed.**
+- `AvailableView` wraps its body in an inner VStack (same fix
+  `ThreadsListView` already had).
+- The "Working: yes/no" pill moved to a `.safeAreaInset(edge: .bottom)`
+  footer (Mail connection-status / Reminders completion-summary
+  pattern). Background is `.bar`, text is `.caption` /
+  `.caption2.weight(.semibold)`. Less prominent than its prior top
+  position, and never fights the row List for height.
+- Dropped the empty top-level `Section { ForEach }` wrapper in the
+  Available list. An inset-style List with no header was still spending
+  Section header height for nothing. Now the visible rows render flat
+  and the "De-emphasized during working hours" subsection still gets
+  its own meaningful header.
+- Row `listRowInsets` leading went 28 → 20 to match the inset-list
+  default.
+
+**Generalize.** When a pane needs a header (or footer) that sits beside
+a List, either (a) wrap header + List in an inner VStack, or
+(b) attach the header/footer via `.safeAreaInset(edge:)`. Don't drop
+two greedy siblings directly into `PaneListShell.content()`.
+
+---
+
 ## Don't override system control typography
 
 **Rule.** When a control wraps a `Toggle(.button)` / `Button` /

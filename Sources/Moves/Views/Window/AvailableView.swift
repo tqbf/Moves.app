@@ -18,69 +18,71 @@ struct AvailableView: View {
 
   var body: some View {
     PaneListShell {
-      workingStatus
-        .padding(.horizontal, 28)
-        .padding(.bottom, 12)
-      let filtered = filtered()
-      if filtered.visible.isEmpty, filtered.deemphasized.isEmpty {
-        ContentUnavailableView(
-          "Nothing available",
-          systemImage: "figure.walk.motion",
-          description: Text("Add a breadcrumb to a thread, or capture a reminder.")
-        )
-      } else {
-        List {
-          if !filtered.visible.isEmpty {
-            Section {
-              ForEach(filtered.visible) { row in
-                rowView(row, deemphasized: false)
+      VStack(spacing: 0) {
+        let filtered = filtered()
+        if filtered.visible.isEmpty, filtered.deemphasized.isEmpty {
+          ContentUnavailableView(
+            "Nothing available",
+            systemImage: "figure.walk.motion",
+            description: Text("Add a breadcrumb to a thread, or capture a reminder.")
+          )
+        } else {
+          List {
+            // Flat top section, no header — the pane itself answers
+            // "what is this?", so a section title would be a tautology.
+            // The de-emphasized group below DOES need its header because
+            // its rows look like they belong with the rest until the
+            // header explains the visual demotion.
+            ForEach(filtered.visible) { row in
+              rowView(row, deemphasized: false)
+            }
+            if !filtered.deemphasized.isEmpty {
+              Section("De-emphasized during working hours") {
+                ForEach(filtered.deemphasized) { row in
+                  rowView(row, deemphasized: true)
+                }
               }
             }
           }
-          if !filtered.deemphasized.isEmpty {
-            Section("De-emphasized during working hours") {
-              ForEach(filtered.deemphasized) { row in
-                rowView(row, deemphasized: true)
-              }
-            }
-          }
+          .listStyle(.inset)
+          .scrollContentBackground(.hidden)
+          // 20pt leading matches the inset-list's default row leading on
+          // macOS, so the row text aligns with the toolbar's pane title.
+          .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
         }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
-        // Align row content to the 28pt grid the Working pill above
-        // uses. .inset style adds its own internal inset; listRowInsets
-        // overrides it so the row text starts at exactly 28pt — same
-        // x as the pill caption.
-        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
+      }
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        workingStatus
       }
     }
   }
 
-  /// "Working: yes/no" pill. "Yes" gets the orange urgency tint the
-  /// menubar badge and Upcoming hard-deadline icons already use; "no"
-  /// stays neutral gray. The configured hours range used to render to
-  /// the right of the pill but added clutter without value — Settings
-  /// is the right place to see/edit the window.
+  /// "Working hours: yes/no" footer chip. Lives in a `.safeAreaInset`
+  /// at the bottom of the pane so it never fights the List for vertical
+  /// space — and so the reader sees the thread list first. "Yes" gets
+  /// the orange tint Moves uses for attention/urgency throughout the
+  /// app; "no" stays neutral. Footer matches the macOS pattern (Mail's
+  /// connection-status footer, Reminders' completion summary).
   @ViewBuilder
   private var workingStatus: some View {
     let working = store.isWorkTime
     let tint: Color = working ? .orange : .secondary
     let label = working ? "yes" : "no"
     HStack(spacing: 6) {
-      Text("Working:")
-        .font(.system(size: 13))
+      Text("Working hours:")
+        .font(.caption)
         .foregroundStyle(.secondary)
       Text(label)
-        .font(.system(size: 11, weight: .semibold))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
+        .font(.caption2.weight(.semibold))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
         .foregroundStyle(tint)
-        .background(
-          Capsule(style: .continuous)
-            .fill(tint.opacity(0.15))
-        )
+        .background(Capsule(style: .continuous).fill(tint.opacity(0.15)))
       Spacer()
     }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 8)
+    .background(.bar)
   }
 
   private func filtered() -> WorkingHoursService.FilteredAvailable {
