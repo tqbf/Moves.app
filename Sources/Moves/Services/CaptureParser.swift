@@ -11,8 +11,11 @@ import Foundation
 ///   * `… tomorrow`                    → tomorrow 00:00; soft; date
 ///   * `… tomorrow <H>` / `… tomorrow <H>am` / `tomorrow <H>:<M>pm`
 ///                                     → tomorrow at time; soft; datetime
+///   * `… tomorrow at <H>` / `… tomorrow at <H>pm`
+///                                     → tomorrow at time; soft; datetime
 ///   * `… <weekday>`                   → next weekday 00:00; soft; date
 ///   * `… <weekday> <H>pm`             → next weekday at time; soft; datetime
+///   * `… <weekday> at <H>pm`          → next weekday at time; soft; datetime
 ///   * `… due <…>` / `… by <…>`        → same as the rhs form, but soft
 ///   * `… YYYY-MM-DD`                  → that date 00:00; soft; date
 ///   * `… YYYY-MM-DD HH:MM`            → that datetime; soft; datetime
@@ -27,6 +30,13 @@ struct ParsedCapture: Equatable, Sendable {
   var dueAt: Date?
   var dueKind: DueKind
   var interruptionKind: InterruptionKind
+  /// True when the parser matched a date phrase that's ambiguous on its own —
+  /// e.g. a bare `tomorrow` or bare `<weekday>` with no time-of-day. The
+  /// capture overlay surfaces this as a yellow `?` chip variant so the user
+  /// knows to tap and refine, rather than trusting an inferred midnight.
+  /// Captures without a match (`dueAt == nil`) are not low-confidence — the
+  /// absence of a chip is its own signal.
+  var lowConfidence: Bool = false
 }
 
 enum CaptureParser {
@@ -53,7 +63,8 @@ enum CaptureParser {
         title: title,
         dueAt: match.dueAt,
         dueKind: match.dueKind,
-        interruptionKind: match.interruptionKind
+        interruptionKind: match.interruptionKind,
+        lowConfidence: match.dueKind == .date
       )
     }
 
@@ -153,6 +164,19 @@ enum CaptureParser {
         return SuffixMatch(consumed: n - start, dueAt: due, dueKind: .datetime, interruptionKind: .soft)
       }
 
+      // `tomorrow at <H[am|pm]>` (exactly 3 tokens). The plain `at <H>` rule
+      // below would otherwise win on the last two tokens and silently
+      // discard the `tomorrow` anchor, producing the "Today at 3 PM" lie
+      // when the user typed "… tomorrow at 3pm".
+      if head == "tomorrow",
+         remaining.count == 2,
+         remaining[0] == "at",
+         let clock = parseClockTime(remaining[1])
+      {
+        let due = combine(date: startOfTomorrow(after: now, calendar: calendar), with: clock, calendar: calendar)
+        return SuffixMatch(consumed: n - start, dueAt: due, dueKind: .datetime, interruptionKind: .soft)
+      }
+
       // `<weekday>` (exactly 1 token)
       if remaining.isEmpty, let weekday = parseWeekday(head) {
         let day = nextWeekdayStart(weekday: weekday, after: now, calendar: calendar)
@@ -161,6 +185,19 @@ enum CaptureParser {
 
       // `<weekday> <H[am|pm]>` (exactly 2 tokens)
       if remaining.count == 1, let weekday = parseWeekday(head), let clock = parseClockTime(remaining[0]) {
+        let day = nextWeekdayStart(weekday: weekday, after: now, calendar: calendar)
+        let due = combine(date: day, with: clock, calendar: calendar)
+        return SuffixMatch(consumed: n - start, dueAt: due, dueKind: .datetime, interruptionKind: .soft)
+      }
+
+      // `<weekday> at <H[am|pm]>` (exactly 3 tokens). Same reason as the
+      // `tomorrow at …` form: bare `at <H>` would otherwise steal the
+      // suffix and drop the weekday anchor.
+      if remaining.count == 2,
+         let weekday = parseWeekday(head),
+         remaining[0] == "at",
+         let clock = parseClockTime(remaining[1])
+      {
         let day = nextWeekdayStart(weekday: weekday, after: now, calendar: calendar)
         let due = combine(date: day, with: clock, calendar: calendar)
         return SuffixMatch(consumed: n - start, dueAt: due, dueKind: .datetime, interruptionKind: .soft)

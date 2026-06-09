@@ -103,10 +103,8 @@ private struct AvailableRow: View {
           .fontWeight(deemphasized ? .regular : .medium)
           .foregroundStyle(deemphasized ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
           .lineLimit(1)
-        Text(item.move.text)
+        RowSubtitle(item.move.text)
           .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.vertical, 4)

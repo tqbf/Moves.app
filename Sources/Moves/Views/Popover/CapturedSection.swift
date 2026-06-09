@@ -51,10 +51,12 @@ private struct CapturedPopoverRow: View {
         .font(.caption)
         .lineLimit(1)
       Spacer(minLength: 4)
-      if let dueLabel {
-        Text(dueLabel)
-          .font(.caption)
-          .foregroundStyle(.tertiary)
+      // Reuse the shared DeadlineChip rather than rendering raw due text
+      // — keeps the deadline vocabulary consistent across surfaces and
+      // gives the popover row the same red/orange urgency treatment as
+      // the main-window rows.
+      if let dueDate {
+        DeadlineChip(dueAt: dueDate, size: .compact)
       }
     }
   }
@@ -84,16 +86,8 @@ private struct CapturedPopoverRow: View {
     }
   }
 
-  private var dueLabel: String? {
+  private var dueDate: Date? {
     guard let due = item.dueAt else { return nil }
-    return Self.formatter.string(from: Date(timeIntervalSince1970: TimeInterval(due)))
+    return Date(timeIntervalSince1970: TimeInterval(due))
   }
-
-  private static let formatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateStyle = .short
-    f.timeStyle = .short
-    f.doesRelativeDateFormatting = true
-    return f
-  }()
 }

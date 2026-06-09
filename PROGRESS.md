@@ -2,6 +2,1124 @@
 
 Newest first.
 
+## 2026-06-09 — UI glow-up: live visual gate + inspector default
+
+Live sweep against `build/Moves.app` after batches 1–8 landed. Caught two
+real bugs that the per-batch compile gates couldn't see:
+
+1. **`DeadlineChip` text wrapped vertically on narrow rows.** The chip's
+   relative-date `Text` had no `lineLimit` / truncation modifier, so on
+   Captured + Deadlines panes (~220pt wide with the inspector open) the
+   text wrapped to multiple lines, the capsule background stretched to
+   full row height, and the row title VStack got squeezed to zero width.
+   Fix in `Sources/Moves/Views/Shared/DeadlineChip.swift`: added
+   `.lineLimit(1).truncationMode(.tail)` on the chip text. The chip now
+   shrinks to icon-only on cramped rows and shows the full relative date
+   when the row has room.
+2. **Inspector default was wrong for the shipped window width.** Batches
+   2 + 8 wired a 280pt inspector column on Available / Captured /
+   Deadlines / Threads, defaulting to visible via `@SceneStorage`. At
+   the app's default window width (~720pt) that leaves ~220pt for the
+   row list, which is below the threshold where row anatomy (leading
+   icon + title + chip + hover slot + trailing menu) has room to render
+   coherently. Flipped the four `@SceneStorage("inspector.*.visible")`
+   defaults from `true` to `false`. First-time users see the focused
+   list-only layout; the inspector toggle in the pane header opts in
+   when wanted.
+
+Visual gate sweep covered (all green):
+
+- **Toolbar** — "Off hours" status pill (clickable → SettingsLink) +
+  quick-capture `+` button (batches 2 / 7 / 8 ✓).
+- **Sidebar counts** — Available 1, Current 1, Threads 2, Captured 5,
+  Deadlines 2 (batch 2 ✓).
+- **Available** — header "Available · 1", row "Test thread" with
+  subtitle "write tomorro…" (RowSubtitle sanitizer + TaskRow body, batch
+  1 + 4 ✓); hover reveals ▶ Start / ↗ Open icons (batch 7 ✓); footer
+  "Outside working hours · Next: Today at 9:00 AM" with chevron + green
+  dot (batch 8 ✓); inspector empty state "Nothing selected · Open top
+  thread" CTA (batch 2 + 8 ✓).
+- **Current** — header "Current · 1", hero card with large monospaced
+  elapsed `08:26:28`, caption "Started 12:32 AM", "Next: write
+  tomorrow's draft" line, button hierarchy (blue prominent Open thread,
+  neutral Park, red destructive Stop pushed trailing) — batch 3 ✓.
+- **Captured** — "test" + Reminder + red overdue chip "Yesterday,
+  11:44 PM"; "finish proposal" + Task + orange chip "6/12/26, 5:00 PM";
+  bare captures "first thing" / "buy bread" / "buy milk" with Capture
+  subtitle. Row selection paints a 0.12 accent tint (batch 4 + 6 + 7 ✓).
+- **Deadlines** — same chip vocabulary; "test" overdue / "finish
+  proposal" orange (batch 6 ✓).
+- **Capture overlay** — typed `test API tomorrow at 3pm`. Title
+  preview "test API" stripped (batch 1 ✓); orange chip "Tomorrow,
+  3:00 PM" with trailing `xmark.circle.fill` clear (batch 5 ✓);
+  destination capsule "Deadlines" (batch 5 ✓); alert-offsets row
+  "Alert me: At due / 15m / 30m / 1h / 2h / Morning of" with At due /
+  1h / Morning of pre-selected (batch 5 ✓); "esc to dismiss" keycap +
+  prominent blue "Create" button (batch 5 ✓).
+
+`make check` + `make test` green (206 tests). The two patches above are
+in the same working tree as batches 1–8.
+
+## 2026-06-09 — UI glow-up batch 8: empty states + footer + contrast
+
+Closes out items 28–30 from `plans/ui-glowup.md`. The remaining gap was
+the empty surfaces: every sidebar destination either had a stock
+`ContentUnavailableView` with placeholder copy, or (Threads) no empty
+treatment at all — the user landed on a blank canvas. The
+working-hours footer still read as a debug toggle ("yes" / "no"), and
+the leaf row subtitles were too gray-on-gray for productivity scanning.
+
+**Item 28 — designed empty states per destination.** Walked every
+pane:
+
+- **Current** → "Nothing in progress" with `figure.walk` and a
+  `.borderedProminent` "Start something from Ready" action that flips
+  the sidebar selection back to `.available`. Wired via a new
+  `onGoAvailable` closure parameter (injected by `RootWindow`); the
+  pane stays decoupled from `SidebarDestination`.
+- **Captured** → "No captures yet" with `square.and.arrow.down`. The
+  description interpolates the live capture-shortcut display read from
+  `KeyboardShortcuts.getShortcut(for: .capture)?.description` so a
+  user rebind in Settings is reflected in the copy. Fallback to
+  "⌥Space" (the shipped default). Action button opens the same
+  palette the global hotkey shows via `CapturePaletteSingleton.shared?.show()`.
+- **Deadlines** → "No upcoming deadlines" with `calendar`. No action
+  button — the way to put a row here is to capture a deadlined item,
+  and that affordance is surfaced by the Captured empty state.
+- **Available** → tightened existing empty state copy to "Nothing
+  ready to work on" so it reads as a status, not a verdict.
+- **Threads** → previously had no empty state; the new-thread row sat
+  alone above a blank canvas. Added a `ContentUnavailableView` with
+  `square.stack.3d.up`, a "Threads are the units of ongoing work in
+  Moves" description, and a "New thread…" action that calls the
+  existing `focusNewThreadInput()` (same path Cmd-N uses) to focus
+  the inline composer above it.
+- **Parking Lot** → "Nothing parked" with `archivebox`. No action —
+  parking is intentionally optional per the §2 model.
+- **Time Log** → "No work sessions yet" with the plain `clock` glyph
+  (replacing `clock.arrow.circlepath` so the surface reads cleaner).
+  Description aligned with the brief's "work sessions will appear
+  here" copy.
+
+Standardized on the macOS-14 `ContentUnavailableView { label } description: { } actions: { }`
+trailing-closure form across panes so the empty-state vocabulary is
+visually consistent — same systemImage weight, same description
+position, same action button treatment. Deadlines / Available /
+ParkingLot stayed on the simpler init (title + systemImage +
+description) because they have no action button.
+
+**Item 29 — working-hours footer rewrite.** The old footer rendered
+`Working hours: yes/no` as a colored capsule next to a tiny static
+label. Reframed:
+
+- **Open state:** `Working hours · open` with a small green status
+  dot (6pt circle). Declarative present-tense reading, the same idiom
+  Mail's connection-status footer uses.
+- **Closed state:** `Outside working hours` with a neutral
+  `secondary.opacity(0.6)` dot. When the next opening falls within
+  the next 12h, appends a `· Next: <relative time>` suffix
+  (`DateFormatter` with `doesRelativeDateFormatting = true` so the
+  reader sees "Tomorrow at 9:00 AM" rather than a date math result).
+  Stays silent on far-future windows (e.g. weekend on a Mon–Fri
+  config) to keep the footer compact.
+
+Wrapped the whole HStack in a `SettingsLink` (macOS 14+) so a click
+opens System Settings → Moves at the user's last-visited tab. Used
+`.buttonStyle(.plain)` so the underlying NSButton chrome doesn't
+fight the footer's `.bar` material. A `chevron.right` glyph at the
+trailing edge advertises the affordance the way Mail / Notes' inline
+links do.
+
+The status sentence + next-window suffix are recomputed inside a
+`TimelineView(.periodic(from: .now, by: 60))` so the footer flips
+state automatically as the working-hours window opens and closes —
+same one-minute cadence as the rest of the working-hours-derived UI.
+
+Next-window detection lives in `nextWorkingHoursStart(after:)`: a
+minute-by-minute forward probe through `WorkingHoursService.isInside`
+bounded at 8 days. Bounded probing keeps a malformed (empty-days)
+`WorkingHours` from spinning, and matches the resolution of
+`isInside`'s minute-of-day check. Returns `nil` when no opening is
+reachable within the bound; the footer drops the suffix.
+
+VoiceOver gets a composed label ("Outside working hours. Open
+Settings.") so the action and the status are both conveyed in one
+read.
+
+**Item 30 — secondary-text contrast bump.** Added a single semantic
+constant rather than sprinkling `Color.primary.opacity(0.72)` at
+twenty call sites:
+
+```swift
+// PaneMetrics.swift
+static let secondaryText: Color = Color.primary.opacity(0.72)
+```
+
+Routed it through the two leaf components that carry secondary
+weight everywhere:
+
+- `RowSubtitle` body — every `TaskRow` subtitle in the app now reads
+  at the higher contrast (Available, Captured, Deadlines, Threads,
+  ParkingLot, popover AvailableSection).
+- `UpcomingSection` popover — both the runway label and the
+  "Nothing hard ahead" line. `CapturedPopoverRow` and `UpcomingRow`
+  are single-line (title + chip) so they don't carry a subtitle —
+  no change needed.
+- Working-hours footer caption — uses the same constant so the
+  contrast story is consistent across the bar.
+
+Skipped the capture palette parsed-preview text (already uses
+`.primary` not `.secondary`), per the brief's "verify it doesn't
+double-down" check. Skipped Settings LabeledContent rows — those
+caption lines are Form `footer:` Texts that Form styles directly;
+poking `.secondary` there would fight the system look.
+
+Left untouched: the working-hours de-emphasized-during-working-hours
+`.opacity(0.5)` from batch 7 (separate visual axis), the `.tertiary`
+"Press ⏎ to add" hint in ThreadsListView's new-row composer (intent
+is "barely-there", not "secondary"), `ThreadTagCapsule` and
+`DestinationCapsule`'s `.secondary` fill (capsule chrome, not body
+text), header chrome rendered through `PaneShell` (already legible
+at `.secondary` because of the larger title weight).
+
+**Tests.** No new tests required — empty-state copy + a semantic
+color constant + a 1-minute next-window probe are all visual / leaf
+changes. `make check` + `make test` green; count holds at 206.
+
+**Visual gate.** Build succeeded; tried to launch
+`build/Moves.app` for the walkthrough but the lock screen was up.
+Spot-check items for the next interactive verifier:
+
+1. Walk each sidebar destination with the database empty / cleared:
+   the empty-state copy + glyph + action button all read as
+   designed and the action moves the user toward the next obvious
+   step. Threads' new-row composer stays visible above the empty
+   view; "New thread…" focuses it.
+2. Click the working-hours footer on the Available pane: System
+   Settings opens at the Moves Settings window (the system will
+   pick the last-visited tab, which is what `SettingsLink` does).
+3. The footer line says "Working hours · open" (green dot) inside
+   the window, "Outside working hours" (gray dot) otherwise, and
+   appends "· Next: …" when the next opening is < 12h out.
+4. TaskRow subtitles in Available / Captured / Deadlines /
+   ParkingLot read measurably darker than the previous
+   `.secondary` — eye-test against the title to confirm
+   hierarchy is preserved (title stays primary-weight semibold).
+
+**Punch-list status.** Batches 1–8 close out items 1–30 from
+`plans/ui-glowup.md`. The whole punch list is shipped; visual gate
+walkthrough is pending until the machine unlocks. No commits, no
+PRs.
+
+## 2026-06-09 — UI glow-up batch 7: interaction states
+
+Knocked out items 25–27 from `plans/ui-glowup.md`. The task-shaped rows
+were missing every desktop interaction convention except selection:
+no hover tint, no focus ring distinction, no per-row hover affordances,
+no right-click context menus on three of the four panes. Filled the
+hook batch 4 left in `TaskRow` and threaded the new state through every
+caller.
+
+**TaskRow — second generic + selection.** `TaskRow<Trailing>` becomes
+`TaskRow<HoverActions, Trailing>`. The new `hoverActions` slot fades in
+on hover via `.opacity(isHovered ? 1 : 0)` with `.animation(.easeOut(
+duration: 0.12), value: isHovered)` — opacity-only so the row width
+doesn't reflow as the cursor crosses. `allowsHitTesting(isHovered)`
+keeps the invisible buttons unclickable from outside the hover region.
+Added `isSelected: Bool` parameter; background priority is selected
+(`Color.accentColor.opacity(0.12)`) > next (0.06) > hovered
+(`Color.gray.opacity(0.08)`) > clear. Wrapped the background in a
+`RoundedRectangle(cornerRadius: 6)` so all three states render as a
+proper row pill rather than full-bleed flood. Hover state driven by a
+private `@State isHovered` + `.onHover` — same pattern as the
+RowHoverActionButton itself.
+
+Three convenience inits keep call-site ergonomics: no-slot, trailing-
+only (for CapturedRow's ellipsis menu and ParkedRow's old buttons —
+the latter migrated anyway), hover-actions-only (Available, Deadlines).
+Existing trailing-closure call sites had to spell out `hoverActions:`
+because the two slots collide on trailing-closure disambiguation.
+
+**RowHoverActionButton.** New shared button at the top of `TaskRow.swift`
+— `.borderless`, `.controlSize(.small)`, 22pt square frame, `.help`
+tooltip doubles as the VoiceOver label. The four affordance flavors:
+
+- Available: `play.fill` Start, `arrow.up.right` Open.
+- Captured: `calendar.badge.clock` Schedule due — additive to the
+  ellipsis menu (the brief said prefer additive over redundant; the
+  hover icon is a one-tap shortcut to the most common processing
+  action).
+- Deadlines: `calendar.badge.clock` Edit due, `checkmark.circle` Mark
+  done.
+- ParkingLot: `play.fill` Unpark, `arrow.up.right` Open — moved off
+  the always-visible `.bordered` chips so the resting state matches
+  the other panes.
+
+**Context menus on every row.** Wired five flavors, all to existing
+AppStore methods. Standard macOS order: positive actions first,
+destructive last with a `Divider` separator and `role: .destructive`.
+
+- Available: Start, Open Thread, Rename Thread… / divider / Park /
+  divider / Delete. Skipped "Set Deadline" because Available rows are
+  threads (no thread-level deadline; the row surfaces the earliest
+  open-item deadline) — per the brief, skip rather than stub.
+- Captured: kept the existing menu (Attach to thread, Convert, Edit
+  due time, Mark Done, Cancel, Delete) — already comprehensive.
+- Deadlines: Edit due time…, Mark Done / divider / Delete.
+- ParkingLot: Unpark, Open Thread / divider / Delete.
+- Threads: already had a context menu; extended with Rename… (next
+  to Open) and moved the menu onto the row body so the new rename
+  sheet can drive `@State` per-row. Mark Active / Park / Mark Done /
+  Delete preserved.
+
+Skipped "Copy as markdown" everywhere — no per-item or per-thread
+markdown export exists in AppStore today; per brief, no stub items.
+
+**Rename sheet.** New `Sources/Moves/Views/Shared/RenameThreadSheet.swift`
+— a tiny TextField + Save/Cancel sheet, used by both Available and
+Threads. Save disabled when the trimmed draft is empty or unchanged so
+the flow can't accidentally clear or no-op the title. Enter saves,
+Escape cancels. `@FocusState` autofocuses one runloop tick after appear
+(same idiom as `CapturePaletteView.onAppear`).
+
+**EditDueTimeSheet promotion.** Was `private struct` inside
+`CapturedRow.swift`; demoted the `private` so the Deadlines pane can
+reuse it for its row-level "Edit due" affordance. Behavior unchanged.
+
+**isSelected plumbing.** Every pane already passed `tag(id)` into
+`List(selection:)`; added the `selection == row.id` read-through on
+each row constructor (Available, Captured, Deadlines, Threads). The
+parking lot doesn't have a List selection model — single-purpose
+surface, kept as-is.
+
+**Disabled state.** Available's de-emphasized section was at
+`.opacity(0.65)`; bumped to `.opacity(0.5)` per the brief — reads more
+clearly as "available but de-emphasized during working hours" rather
+than "subtly lower-contrast".
+
+**Tests.** Interaction states are visual — no new tests. Existing 206
+green via `make check && make test`.
+
+**Visual gate.** Display was locked when I tried to launch the built
+app; build succeeded but visual verification pending the next
+interactive session. Spot-check items for the verifier: (1) hover any
+row in Available/Captured/Deadlines/ParkingLot, action icons fade in
+right of the deadline chip; (2) click a row, full-row accent tint
+appears (distinct from the lighter "Next" tint on the top Available
+row); (3) tab through rows, system focus ring appears; (4) right-click
+each row type, see the menu structure above; (5) Available context
+menu → Rename Thread… opens the new sheet, Enter saves, Escape
+cancels.
+
+## 2026-06-09 — UI glow-up batch 6: deadlines & urgency
+
+Knocked out items 22–24 from `plans/ui-glowup.md` — deadlines needed
+to be visible on every task row regardless of pane (not just the
+Deadlines surface), the chip vocabulary still had ad-hoc due-text
+holdouts in two popover sections and the thread-detail item row, and
+overdue items rendered indistinguishably from "due Friday" because
+the chip had a single orange treatment. Reworked the leaf so every
+caller picks up urgency rendering for free.
+
+**Per-chip urgency at the leaf.** Added `DeadlineChipUrgency` next to
+the existing `DeadlineUrgency` in `Sources/Moves/Domain/DeadlineUrgency.swift`.
+Kept the two enums separate on purpose — `DeadlineUrgency` is the
+*fleet-wide* menubar signal ("any hard item overdue right now?")
+driven by `AppStore.renderedDeadlineUrgency`; the new
+`DeadlineChipUrgency` is a *per-row* day-level computation. Cases:
+`.overdue` / `.dueToday` / `.dueTomorrow` / `.dueFuture`, computed by
+a pure static `from(dueAt:now:calendar:)`. Strict `dueAt < now` for
+overdue, then `Calendar.startOfDay`-based bucketing for the rest. The
+chip then renders red `#FF3B30` + `exclamationmark.triangle.fill`
+for overdue and orange `#FF9500` + `bell.fill` for the three future
+buckets. No third "due today" color — orange stays consistent across
+all non-overdue futures; the relative-date label inside the chip
+already distinguishes "Today at 3:00 PM" from "Tomorrow at 9:00 AM".
+`lowConfidence` yellow still wins (when we're unsure of the date, the
+chip shouldn't simultaneously scream red).
+
+**TimelineView at the chip.** `DeadlineChip` now wraps its content in
+`TimelineView(.periodic(from: .now, by: 60))` and reads `ctx.date` to
+compute the urgency. Scoping the timer to the leaf means the chip
+flips from orange to red the minute its deadline passes — no caller
+has to subscribe, and the rest of the row stays out of the redraw.
+Once-per-minute cadence matches the relative-date label's resolution.
+Costs nothing for chip-less rows because the TimelineView is gated by
+the `if let deadline` in `TaskRow`.
+
+**Item 22 — deadlines on normal rows.** Audited every `TaskRow`
+call site: Available, Captured, Deadlines all pass a `deadline:`
+through. Threads pane intentionally doesn't (thread rows aren't
+task-shaped). The missing state was ParkingLot — parked threads can
+carry deadlined open items, but `openItemsByThread` only covers
+active threads. Added a small `.task(id: thread.id)` inside the
+`ParkedRow` that queries `itemRepository.openForThread` and computes
+the earliest deadline. One query per parked row; the parking lot is
+low-traffic so a global cache wasn't worth the invalidation story.
+When the earliest deadline is non-nil, `TaskRow` is fed
+`isParked: true` so the chip renders in its parked variant.
+
+**Item 23 — chip everywhere.** Replaced three ad-hoc due-text
+holdouts with `DeadlineChip`:
+
+- `UpcomingSection.UpcomingRow` (popover) — was rendering a trailing
+  `Text(formatter.string(...))` in tertiary. Now uses `DeadlineChip(...
+  size: .compact)`. Kept the leading bell/calendar glyph because it
+  encodes interruption kind (hard vs soft), which is independent of
+  the chip's time-pressure axis. Dropped the row's private formatter.
+- `CapturedSection.CapturedPopoverRow` (popover) — same treatment.
+  Dropped the private DateFormatter.
+- `ThreadDetailView.ItemRow` — was rendering a tiny `dueLabel` line
+  underneath the title in tertiary. Now a `DeadlineChip(... .compact)`
+  in the trailing slot. Done items hide the chip; a completed item's
+  deadline is no longer pressure.
+
+Also simplified `DeadlinesView.DeadlineRow`: removed its bespoke
+`isOverdue ? exclamationmark.triangle.fill : bell.fill` leading-icon
+override. The trailing chip now signals overdue (red), so the leading
+icon stays purely an interruption-kind indicator. No more double-
+encoding.
+
+Popover header chip (`MenuPopoverView`'s "•N soon" / "•N overdue") is
+a count summary, not a deadline chip — left alone per spec.
+
+**Item 24 — parked-with-due-date.** New `isParked: Bool` parameter on
+`DeadlineChip`, plumbed through `TaskRow`. When true:
+
+- the chip body renders at `.opacity(0.6)` so the row reads as
+  deferred,
+- a sibling "Parked" caption2 capsule (`.secondary` foreground +
+  `.secondary.opacity(0.15)` capsule fill) renders next to the chip.
+
+ParkingLotView's `ParkedRow` is the only call site for now —
+`isParked` defaults false so every other caller is unaffected. VO
+labels include ", parked" suffix when the flag is set.
+
+**TaskRow extension.** Added `isParked: Bool = false` to both the
+designated init and the no-trailing convenience init. Pure pass-
+through into `DeadlineChip` — `TaskRow` doesn't change its own
+appearance based on it.
+
+**Tests.** New `Tests/MovesTests/DeadlineChipUrgencyTests.swift`
+covers the pure urgency computation. Cases pinned to a UTC Gregorian
+calendar so day-boundary math is reproducible regardless of CI
+locale/timezone. Anchored now to 2026-06-09 14:00 UTC. Coverage:
+
+- `dueAt = now - 5m` → `.overdue`
+- `dueAt = now - 6h` → `.overdue`
+- `dueAt = today 23:30, now = today 14:00` → `.dueToday`
+- Spec case `dueAt = startOfToday + 14h, now = startOfToday + 9h` →
+  `.dueToday`
+- `dueAt = tomorrow 00:30` → `.dueTomorrow`
+- `dueAt = tomorrow 23:59` → `.dueTomorrow`
+- `dueAt = day after tomorrow 09:00` → `.dueFuture`
+- `dueAt = now + 1h` (same day) → `.dueToday` (documenting that the
+  chip doesn't have a separate `.dueSoon` bucket — that's a menubar
+  concept driven by `dueSoonHardCount`)
+- `dueAt = now + 36h` → `.dueFuture`
+- `dueAt == now` (exact equality) → `.dueToday` (overdue is strict
+  `<`, not `<=`)
+
+Test count: 206 (was 196) — 10 new cases. `make check` + `make test`
+green.
+
+**Visual gate.** The display was locked when I tried to launch and
+screenshot. Build + tests verified the code path; visual verification
+pending next interactive session. Sample seed for the verifier:
+
+```
+sqlite3 ~/Library/Application\ Support/Moves/moves.sqlite3
+INSERT INTO items (id,thread_id,segment_id,title,body_markdown,status,
+  kind,due_at,due_kind,interruption_kind,created_at,updated_at)
+VALUES
+  ('test-overdue',NULL,NULL,'Overdue chip test','','captured',
+   'reminder', strftime('%s','now')-300, 'datetime','hard',
+   strftime('%s','now'),strftime('%s','now')),
+  ('test-soon',NULL,NULL,'Due-soon test','','captured',
+   'reminder', strftime('%s','now')+600, 'datetime','hard',
+   strftime('%s','now'),strftime('%s','now')),
+  ('test-today',NULL,NULL,'Due-today test','','captured',
+   'reminder', strftime('%s','now')+8*3600, 'datetime','hard',
+   strftime('%s','now'),strftime('%s','now')),
+  ('test-tomorrow',NULL,NULL,'Due-tomorrow test','','captured',
+   'reminder', strftime('%s','now')+24*3600, 'datetime','hard',
+   strftime('%s','now'),strftime('%s','now'));
+```
+
+Verifier should look for: red+triangle chip on the overdue row,
+orange+bell on the rest, parked-with-due-date showing dimmed orange
+chip + "Parked" capsule in the Parking Lot pane.
+
+## 2026-06-09 — UI glow-up batch 5: command overlay polish
+
+Knocked out items 16–21 from `plans/ui-glowup.md` — the capture palette
+overlay had a smashed-together preview line, display-only deadline chips
+the parser couldn't be trusted to read for the user, an alert-offsets
+row that appeared even with no deadline parsed, and a Return/Esc
+affordance you had to know to look for. Rebuilt the overlay around the
+shared `DeadlineChip` from batch 3 (now optionally tappable + clearable)
+and reorganized the footer around explicit Create + Esc affordances.
+
+**16. Visual grammar in the preview line.** Three slots, each with its
+own visual identity:
+
+- **Title** — `.system(size: 13, weight: .semibold)` primary. Was
+  `.secondary`-tinted before; now reads as the dominant thing because
+  it's the thing being created.
+- **Deadline chip** — the shared `DeadlineChip` (orange `bell.fill +
+  relative date`), same vocabulary as the row chip and the Current card.
+  No more bespoke chip-builder inside `CapturePaletteView`.
+- **Destination capsule** — new `DestinationCapsule` subview: monochrome
+  `Color.secondary.opacity(0.15)` capsule with a context icon
+  (`tray` for "Ready", `bell` for "Deadlines") and the destination
+  label. `.secondary` foreground style so it intentionally loses the
+  visual fight with the orange chip — orange = time pressure, grey =
+  where this is going to land. Destination today is `Ready` when no
+  deadline, `Deadlines` when there's one; `Thread` is reserved for
+  the future thread-attach affordance.
+
+The old `arrow.turn.down.right` glyph + "· saves as a capture" trailer
++ `⏎` glyph all came out — replaced by the explicit footer.
+
+**17. Editable deadline chip.** `DeadlineChip` gains two additive
+optional closures: `onTap` and `onClear`. Defaults are `nil`, so every
+existing call site (`CurrentSection`, `CurrentDetailView`, `TaskRow`)
+keeps the read-only label-shaped chip with no chrome change. When the
+overlay supplies `onTap`, the chip wraps in a `Button` with
+`.buttonStyle(.plain)`; tapping presents `.popover(arrowEdge: .top)`
+attached directly to the chip. The popover holds:
+
+- A "Edit deadline" header.
+- A row of preset bordered buttons — "In 1h", "Tomorrow 9am",
+  "Friday 5pm". Each computes against `Date()` at click time so
+  presets stay live.
+- A `.graphical` `DatePicker` over `[.date, .hourAndMinute]`.
+- A trailing `Cancel` / `Set` pair, `Set` styled `.borderedProminent`
+  and bound to `.keyboardShortcut(.defaultAction)`; `Cancel` to
+  `.cancelAction`.
+
+The popover binds to a private `pickerDraftDate` so the spinner can
+explore freely without clobbering the override until the user presses
+Set. NSPanel popover behavior: the panel is configured
+`becomesKeyOnlyIfNeeded = false`, so the popover overlay doesn't shut
+the palette when it opens; popover dismisses on outside tap inside the
+overlay surface as usual.
+
+**Override semantics.** Manual selection writes to a new local
+`manualDueAt: Date?` state in `CapturePaletteView`. While it's non-nil
+the parser's `dueAt` is ignored for chip rendering and alert-row
+visibility — subsequent typing on the title can't clobber the manual
+choice. Submit-time wiring: `CapturePaletteView` passes a new
+`DueOverride` (top-level type in `AppStore.swift`, hard interruption)
+into `AppStore.capture(_:offsetsOverride:dueAtOverride:)`. The store
+applies it post-parse, swapping in the explicit datetime, clearing the
+low-confidence flag, and forcing `interruptionKind = .hard` (the
+date-picker is for deadlines that matter — soft-deadline UX stays
+parser-driven). Clearing the chip resets `manualDueAt` AND replaces
+the draft with the parser's cleaned title (so the next keystroke
+doesn't immediately re-recognize the same phrase and re-add the
+chip).
+
+**18. Alert offsets gated on effective deadline.** `AlertOffsetChipRow`
+now renders only when `effectiveDueAt != nil` (manual override OR
+parser result). Confirmed via grep that the row was previously gated
+on `currentParse?.dueAt != nil` only — manual overrides went through
+unsignaled. Reseeding still re-runs on `draft` AND on `manualDueAt`
+change so the kind defaults swap correctly when the user picks
+manually (manual override → `.reminder` defaults).
+
+**19. Confidence / failure state.**
+
+- **Removable due chip.** `DeadlineChip.onClear` renders a trailing
+  `xmark.circle.fill` as a separate `Button(.plain)` inside the chip
+  capsule. Tooltip "Clear deadline". The overlay always supplies
+  `onClear` when the chip is shown, so the user always has the
+  escape hatch.
+- **Low-confidence treatment.** Added `lowConfidence: Bool` (default
+  `false`) to `ParsedCapture`. Set true when the matched suffix's
+  `dueKind` is `.date` (vs `.datetime`) — i.e. bare `tomorrow`, bare
+  `<weekday>`, bare `YYYY-MM-DD`. The flag flows into `DeadlineChip`'s
+  new `lowConfidence` parameter, which swaps the bell glyph for
+  `questionmark.circle.fill` and tints the entire chip yellow instead
+  of orange. Tooltip still shows the full calendar date via the
+  existing `.help(absoluteFormatter)` from batch 1.
+- **Manual overrides always read as high-confidence.** When
+  `manualDueAt` is set the overlay passes `lowConfidence: false`
+  regardless of the parser — the user told us exactly what they meant.
+
+**20. Trailing Create button.** New `footer` subview in
+`CapturePaletteView`. Trailing `.borderedProminent` Create button
+bound to `.keyboardShortcut(.defaultAction)` so Return still works,
+plus the visible affordance the hooked-Return glyph wasn't carrying.
+Disabled when the draft trims to empty. The footer only renders while
+`lastSaved == nil` — the brief post-save dwell stays uncluttered.
+
+**21. Esc-to-dismiss hint.** New private `KeyCapGlyph` subview at the
+leading edge of the footer renders a small "esc" key-cap (monospaced
+.medium 10pt, `RoundedRectangle(cornerRadius: 4)` with a 0.5pt
+secondary stroke). Followed by `Text("to dismiss")` in 11pt
+secondary. Stays in the leading edge so the trailing Create button is
+the eye's final stop.
+
+**File-by-file changes.**
+
+- `Sources/Moves/Services/CaptureParser.swift` — `ParsedCapture` gains
+  `lowConfidence: Bool = false`. Set true when the matched suffix is
+  `.date`-kind.
+- `Sources/Moves/Model/AppStore.swift` — `capture(_:now:offsetsOverride:
+  dueAtOverride:)` accepts an optional manual override; applies it
+  post-parse. New top-level `DueOverride` struct (date + kind, defaults
+  to `.hard`).
+- `Sources/Moves/Views/Shared/DeadlineChip.swift` — additive
+  `lowConfidence: Bool`, `onTap: (() -> Void)?`, `onClear: (() ->
+  Void)?` parameters. When `onTap` is set the chip wraps in a
+  `Button(.plain)`; when `onClear` is set a trailing `xmark.circle.fill`
+  button appears inside the capsule. Yellow tint + `questionmark.circle
+  .fill` glyph swap-in for low-confidence. Defaults preserve every
+  existing call site.
+- `Sources/Moves/Views/Capture/CapturePaletteView.swift` — rebuilt
+  preview row around `DeadlineChip` + `DestinationCapsule`. New
+  `manualDueAt` / `datePickerOpen` / `pickerDraftDate` local state.
+  `.popover(arrowEdge: .top)` on the chip carries the date picker.
+  New `footer` subview with leading `KeyCapGlyph("esc") + "to dismiss"`
+  and trailing `.borderedProminent` "Create" button. New private
+  `DueDatePreset` struct (Sendable, `@Sendable` compute closures) for
+  the popover presets row. Removed the bespoke `deadlineChip(for:
+  kind:)` builder — `DeadlineChip` is the single source of truth.
+
+**Tests.** Added 6 parser tests covering the new `lowConfidence`
+field: `testTomorrowAloneIsLowConfidence`,
+`testTomorrowAtTimeIsHighConfidence`, `testBareWeekdayIsLowConfidence`,
+`testWeekdayWithTimeIsHighConfidence`, `testNoMatchIsNotLowConfidence`,
+`testISODateAloneIsLowConfidence`. No tests added for the local
+`CapturePaletteView` overlay state (`manualDueAt`, popover wiring) —
+the brief calls them out as pure view state, exercised by the visual
+gate.
+
+**Gates.** `make check` clean. `make test` green at 196/196 (was
+190 → +6 new parser tests). `make` produces a valid signed
+`build/Moves.app`.
+
+**Punted: visual gate.** Machine was at the macOS lockscreen at the
+end of this session (same as batches 1, 2, 4). Took a `request_access`
++ screenshot; got the lockscreen. The structural changes are
+conservative — additive parameters on `DeadlineChip`, an additive
+optional parameter on `AppStore.capture`, a new local-state-only
+override path in `CapturePaletteView` — and the overlay compiles +
+passes the full suite. Hand-off note: after unlock, ⌥Space the
+capture palette and verify:
+
+1. Type `test API tomorrow at 3pm` — title "test API" reads primary
+   semibold, orange `DeadlineChip` reads "Tomorrow at 3:00 PM",
+   monochrome "Deadlines" capsule trailing the chip. Alert offsets
+   row appears under the preview.
+2. Click the chip — popover opens above with presets row + graphical
+   date picker + Cancel/Set. The palette stays key.
+3. Pick "Friday 5pm" preset; press Set — chip updates to "Fri, … at
+   5:00 PM" (or "Friday at 5:00 PM" via the relative formatter).
+   Return creates.
+4. Click the trailing `xmark.circle.fill` on the chip — chip
+   disappears, alert-offsets row collapses, destination capsule flips
+   to "Ready".
+5. Type `tomorrow` alone — chip shows yellow `questionmark.circle
+   .fill` + yellow text/background (low-confidence treatment). Tap
+   it; pick a time; chip returns to orange.
+6. Type something with no parser hit (e.g. `read the asyncio docs`)
+   — no chip, no alert row, destination "Ready", trailing Create
+   button enabled.
+7. Verify the footer: "esc to dismiss" key-cap glyph at leading edge;
+   `.borderedProminent` Create button at trailing edge; Esc still
+   dismisses; Return still creates.
+
+## 2026-06-09 — UI glow-up batch 4: row anatomy
+
+Knocked out items 12–15 from `plans/ui-glowup.md` — task rows across the
+main window had no anatomy beyond "title + secondary text + system
+divider", felt cramped against the canvas, and gave the eye nothing to
+land on in Available. Built one shared row, adopted it everywhere, and
+let the macOS inset-list system spacing carry separation instead of
+literal `Divider`s.
+
+**One row to rule them all.** New `Sources/Moves/Views/Shared/TaskRow.swift`
+parameterized by:
+
+- `title: String` — `.system(size: 14, weight: .semibold)`, single line,
+  tail-truncated.
+- `subtitle: String?` — feeds the existing `RowSubtitle` (batch 1's
+  ellipsis-sanitizer + secondary foreground) so the truncation behavior
+  is consistent everywhere.
+- `deadline: Date?` — when set, the orange `DeadlineChip` (batch 3)
+  renders trailing. Same chip vocabulary as the capture preview and
+  Current card; batch 6 owns urgency-state visuals (overdue red etc.),
+  this slot just wires the data.
+- `threadTag: String?` — small monochrome capsule used by Captured /
+  Deadlines rows to surface the parent thread's title (Available /
+  Threads rows are already inside their thread's context, so they don't
+  set it).
+- `leadingIcon: TaskRowLeadingIcon?` — `(systemName, tint, a11y label)`
+  triple. Captured + Deadlines use it for the interruption / overdue
+  glyph; Available / Threads / Parking Lot leave it nil.
+- `isNext: Bool` — see item 15.
+- `trailing: () -> Trailing` — `@ViewBuilder` slot with an `EmptyView`
+  default specialization. Generic over the trailing content type rather
+  than `AnyView?` to keep the layout path type-erased only where it
+  needs to be. Captured's `ellipsis.circle` menu and Parking Lot's
+  Unpark / Open buttons live here today; batch 7's hover affordances
+  will fill it on the other panes.
+
+`TaskRowLeadingIcon` is a file-scope struct (not nested in `TaskRow<Trailing>`)
+so callers don't have to spell the generic when constructing one — got
+caught on `TaskRow<EmptyView>.LeadingIcon` in the first iteration when
+Swift wouldn't infer `Trailing` from the trailing closure with the
+nested type in argument position.
+
+**13. Row height.** New `PaneMetrics.rowMinHeight = 60` constant; every
+`TaskRow` applies `.frame(minHeight: 60)`. `PaneMetrics.listRowVertical`
+goes from 4 → 8 so the row's own vertical padding combined with the
+min-height frame gives a comfortable two-line preview that reads as
+intentional (Mail / Reminders density). One-line rows breathe with the
+same min-height — empty subtitle just falls through.
+
+**14. Separators.** macOS `List(.inset)` was drawing the subtle hairline
+between rows; the reviewer's "separators dominate the content" call was
+exactly that. Picked the "remove dividers, rely on system spacing"
+approach (the brief's first option):
+
+- Every list pane (`AvailableView`, `CapturedView`, `DeadlinesView`,
+  `ParkingLotView`, `ThreadsListView`) now applies
+  `.listRowSeparator(.hidden)` per row.
+- Per-row `.listRowInsets(...)` replaces the previous list-level
+  `.listRowInsets(...)`. Same `PaneMetrics.listRowLeading` / `Trailing`
+  values; the move makes the insets travel with the row when the row
+  is conditionally rendered inside a `Section` (Available's
+  de-emphasized group needed this to land its accent-tinted "Next"
+  background cleanly without spilling onto the section header).
+- No `Divider()` was added or removed between rows — there weren't any
+  in row code to start with; the system separator was the culprit.
+
+**15. Available "Next" treatment.** The first visible row in Available
+(non-deemphasized only) gets:
+
+- A 3pt leading accent bar (`PaneMetrics.nextAccentBarWidth = 3`),
+  vertically inset 10pt at top/bottom so it reads as a marker, not a
+  column rule.
+- A faint `Color.accentColor.opacity(0.06)` background tint across the
+  row width.
+
+Both treatments live inside `TaskRow` keyed off `isNext`, so the same
+visual recipe works anywhere we surface a "do this next" row in the
+future. De-emphasized rows can never be `isNext` — the
+`AvailableRow` wrapper masks the flag with `!deemphasized` so a working-
+hours-de-emphasized first row can't promote itself past the visible
+queue. No "Next" pill on the row chrome — chose the bar + tint over a
+pill so the row anatomy isn't fighting for space with the deadline chip
+slot.
+
+**Inline deadline wired across panes.** Per the brief ("go ahead and
+wire `deadline:` through wherever an item has a `due_at`"), the row
+chip now renders on:
+
+- **Available** — earliest `dueAt` across the thread's open items
+  (`AppStore.openItemsByThread`). Surfaces the closest deadline for a
+  thread directly on its Available row — item 22's "deadlines must
+  appear on normal task rows, not only on the Deadlines pane".
+- **Captured** — `item.dueAt`.
+- **Deadlines** — `item.dueAt`. The subtitle's "Captured" caption only
+  renders when the item has no thread (otherwise the trailing thread
+  tag already says where it lives).
+- **Parking Lot** — no deadline today; the row still uses `TaskRow`
+  metrics so the row height matches the rest.
+- **Threads** — thread-shaped (no per-thread deadline), uses `TaskRow`
+  for layout only.
+
+Subtitle simplification fell out of this: Captured's row used to render
+`Reminder · Today at 3:00 PM` as the secondary line; now it's just
+`Reminder` and the deadline goes to the chip. Same shift in Deadlines —
+the row no longer concatenates `thread · date` in the subtitle, the
+thread tag and the chip carry their own slots.
+
+**File-by-file changes.**
+
+- `Sources/Moves/Views/Shared/TaskRow.swift` — new. `TaskRow<Trailing>`
+  + `TaskRowLeadingIcon` + private `ThreadTagCapsule`.
+- `Sources/Moves/Views/Window/PaneMetrics.swift` — added `rowMinHeight`,
+  `nextAccentBarWidth`; bumped `listRowVertical` from 4 to 8.
+- `Sources/Moves/Views/Window/AvailableView.swift` — `rowView` takes
+  `isNext`; computes earliest deadline via `openItemsByThread`;
+  per-row `.listRowSeparator(.hidden)` + `.listRowInsets(...)` on both
+  the flat visible group and the de-emphasized section.
+- `Sources/Moves/Views/Window/CapturedView.swift` — per-row separator
+  hide + insets.
+- `Sources/Moves/Views/Window/Captured/CapturedRow.swift` — body is now
+  a `TaskRow` with a trailing menu in the slot; dropped the bespoke
+  hover background + duplicate date formatter.
+- `Sources/Moves/Views/Window/DeadlinesView.swift` — `DeadlineRow`
+  rebuilt on `TaskRow` with `threadTag:` + `deadline:`; per-row
+  separator hide + insets.
+- `Sources/Moves/Views/Window/ParkingLotView.swift` — `ParkedRow`
+  rebuilt on `TaskRow` with the Unpark / Open buttons in the trailing
+  slot; per-row separator hide + insets.
+- `Sources/Moves/Views/Window/ThreadsListView.swift` — `ThreadRowSummary`
+  rebuilt on `TaskRow` (title + breadcrumb only); per-row separator
+  hide + insets.
+
+The popover sections (`AvailableSection`, `CapturedSection`) were
+deliberately left alone — they live on the 320pt menu-bar surface where
+60pt rows would eat half the popover. The main-window row anatomy is
+the canvas problem.
+
+**Gates.** `make check` clean. `make test` green at 190/190 — no test
+delta (TaskRow is view-side; the data-side change is reading
+`openItemsByThread`, which is already covered by the data-path tests
+that feed it). `make` produces a valid signed `build/Moves.app`.
+
+**Punted: visual gate.** Machine was at the macOS lockscreen at the end
+of this session (same as batches 1 and 2). Took a `request_access`
+screenshot to confirm; got the lockscreen. The structural changes are
+conservative — one new view, one new pair of metrics constants, the
+existing list shells unchanged — and the row anatomy compiles + passes
+the full test suite. Hand-off note: after unlock, run `make run` and
+verify on the main window:
+
+1. **Available** — first row has the leading accent bar + faint accent
+   background. Subsequent rows render flat. Two-line rows read at ~60pt
+   with comfortable breathing room.
+2. **Captured** — row anatomy matches: leading interruption icon,
+   semibold title, "Reminder" / "Task" / "Capture" subtitle, orange
+   `DeadlineChip` trailing if a `dueAt` exists, ellipsis menu at the
+   trailing edge. No row dividers.
+3. **Deadlines** — row anatomy matches: leading bell / calendar /
+   warning icon, semibold title, thread tag capsule, orange chip.
+4. **Parking Lot** — Unpark + Open buttons sit in the trailing slot at
+   `controlSize(.small)`; row height matches the rest.
+5. **Threads** — same metrics, no chip / tag / icon; status sections
+   ("Active" / "Parked" / "Done") still group.
+
+## 2026-06-09 — UI glow-up batch 3: Current card operational detail + button hierarchy
+
+Knocked out items 10–11 from `plans/ui-glowup.md` — the Current card
+now reads as an operational hero (what am I working on, how long, when
+did I start, when is it due) instead of a title + breadcrumb + three
+equal-weight pills.
+
+**10. Operational detail.** Both Current surfaces now show:
+
+- **title** — `.title2` semibold (main window) / `.callout` semibold
+  (popover),
+- **elapsed time** rendered prominently in a self-ticking
+  `monospacedDigit` rounded face (`00:16` → `01:15` → `01:01:01`),
+- **started clock time** ("Started 2:14 PM") in `.caption` secondary,
+- **deadline chip** — reuses the orange `bell.fill + relative date`
+  capsule from the capture palette (`DeadlineChip`) when the active
+  segment carries a `dueAt`. Same chip vocabulary across surfaces; no
+  new urgency color was invented.
+- **action set** with real hierarchy (see item 11).
+
+Layout density honors the two surfaces:
+- **Popover Current section** (320pt-wide menu-bar surface): one
+  compact metadata line — `01:15 · Started 12:32 AM` + optional
+  deadline chip — sitting between title and breadcrumb. Doesn't blow
+  out vertically.
+- **Main-window Current pane**: hero card at 20pt padding, max
+  560pt wide, large rounded elapsed display, started caption
+  underneath, deadline chip trailing-aligned, button row at the
+  bottom.
+
+**Timer mechanism.** The elapsed label self-ticks via
+`TimelineView(.periodic(from: startedAt, by: 1))` scoped to *just the
+digits* — the enclosing card does NOT re-render every second. An
+`@State` `Timer` would have invalidated the whole pane on every tick
+and lost focus/scroll state. New shared view
+`Sources/Moves/Views/Shared/ElapsedTimeLabel.swift` wraps the pattern
+so the popover and the main window share one implementation. Pure
+formatter at `Sources/Moves/Views/Shared/ElapsedTime.swift` so the
+digit math is testable without a SwiftUI host:
+  - `0s   → "00:00"`
+  - `16s  → "00:16"`
+  - `75s  → "01:15"`
+  - `3600s → "01:00:00"`
+  - `3661s → "01:01:01"`
+  - negative intervals clamp to `00:00`
+  - fractional seconds floor (`16.9s → "00:16"`).
+
+**11. Button hierarchy.** No more three-pill row.
+
+- **Open Thread** (main window only) — `.borderedProminent`, blue,
+  `.defaultAction` keyboard shortcut. The primary navigation gesture
+  off the Current card.
+- **Stop** — `.bordered` with `.tint(.red)` and `role: .destructive`
+  (terminal). Keeps the `S` accelerator on both surfaces. On the
+  main window it's right-aligned past a `Spacer` so it visually
+  separates from the constructive actions; in the popover it stays
+  leading next to Park (limited horizontal room).
+- **Park** — `.bordered`, default tint (neutral secondary). Lives
+  between Open Thread and Stop on the main window.
+
+Apple buttons size to their label content (per macOS HIG), so the
+buttons don't all render the same width — that's how the hierarchy
+reads visually. Equal-width pills would have undone the role
+distinction.
+
+The popover Current section deliberately does NOT add a primary
+"Open Thread" button. The popover already has a footer `Open` button
+that navigates to the main window; doubling it here would crowd the
+320pt surface and dilute "the popover's Open" semantics. Stop / Park
+stay the action set there.
+
+**Shared chip.** New `Sources/Moves/Views/Shared/DeadlineChip.swift`
+ports the orange `bell.fill + relative` capsule already in
+`CapturePaletteView.deadlineChip` — same `.short` + relative
+DateFormatter, same `.help(absoluteDate)` tooltip so users can
+confirm the calendar date on hover. Two sizes (`.compact` for the
+popover, `.regular` for the main-window card). Source of the deadline
+is the active segment's `dueAt` (Threads themselves don't carry a
+deadline; regimented threads do via the active segment). When the
+current thread isn't regimented or its active segment has no
+`dueAt`, no chip renders — empty, not a "no deadline" placeholder.
+
+**File-by-file changes.**
+- `Sources/Moves/Views/Shared/ElapsedTime.swift` — new. Pure
+  formatter.
+- `Sources/Moves/Views/Shared/ElapsedTimeLabel.swift` — new.
+  TimelineView-scoped label, takes font + foregroundStyle so both
+  surfaces share the same timer.
+- `Sources/Moves/Views/Shared/DeadlineChip.swift` — new. Orange chip
+  ported from the capture palette.
+- `Sources/Moves/Views/Popover/CurrentSection.swift` — rewrote
+  `activeContent`: title → metadata row (`ElapsedTimeLabel · Started
+  H:MM AM` + optional chip) → segment line → breadcrumb → action
+  row. Stop button now `.bordered` + `role: .destructive` +
+  `.tint(.red)`.
+- `Sources/Moves/Views/Window/CurrentDetailView.swift` — rebuilt as
+  a `card(for:)` factor: title block, metadata block (`HStack` of
+  big elapsed/started column + trailing chip), button row with the
+  three-role hierarchy.
+- `Tests/MovesTests/ElapsedTimeTests.swift` — new. Seven cases
+  covering the format rules above.
+
+**Gates.** `make check` clean. `make test` green at 190/190 (was 183;
++7 new `ElapsedTimeTests` land cleanly, no existing tests touched).
+`make` produces a valid signed `build/Moves.app`.
+
+**Visual gate green.** Machine was unlocked this round. Ran
+`build/Moves.app`, opened the menu-bar popover, started the "Test
+thread" row from the popover's Available section. Confirmed:
+- Popover Current section: `Test thread` (semibold) → `01:23 ·
+  Started 12:32 AM` (mono digits ticking every second, no card
+  re-render visible) → `Next: write tomorrow's draft` → red `Stop`
+  + neutral `Park` → "Or click a thread in Available to switch".
+- Main-window Current pane: `Current · 1` pane header → hero card
+  with `Test thread` title, breadcrumb, large `01:43` elapsed, small
+  `Started 12:32 AM`, blue `Open thread` + neutral `Park` + (spacer)
+  + red `Stop`. No deadline chip (the active segment has no `dueAt`
+  on this thread, expected).
+- Clicked `Open thread` — main window switched to the Threads pane
+  with the Test thread editor opened. Routing intact.
+
+Cross-surface invariant verified: the elapsed counter advanced
+identically on both surfaces (popover read 01:23 when the main-window
+card read 01:37 — same wall clock, different `Date.now` snapshots
+taken seconds apart).
+
+## 2026-06-09 — UI glow-up batch 2: pane structure + inspector
+
+Knocked out items 5–9 from `plans/ui-glowup.md` — the "what is this
+pane?" / "where's the detail surface?" gap across the main window.
+
+**5. Main pane has no header.** Every pane now renders a consistent
+title row at the top of the content area: large semibold pane title
+(`Available`, `Threads`, `Captured`, `Deadlines`, `Parking Lot`,
+`Current`, `Time Log`) + a muted dot-separated count beat (`Captured
+· 5`) + a trailing accessory slot for per-pane controls. Header is
+encoded once in `PaneShell` / `PaneListShell`'s new `PaneHeader`; not
+duplicated per pane. Count goes to nil when the destination has no
+list (Current shows `1` when something is active, otherwise the pane
+title alone).
+
+**6. Content alignment isn't consistent.** Single source of truth in
+`Sources/Moves/Views/Window/PaneMetrics.swift`: `horizontalInset = 24`,
+`listRowLeading = 24`, `listRowTrailing = 24`, `topInset = 16`,
+`headerToContentSpacing = 12`, `inspectorWidth = 280`. Every pane
+routes its padding/list-row insets through these constants. The Mail-
+style "row text aligns under the pane title" grid now holds across
+Available, Threads, Captured, Deadlines, Parking Lot, Current, Time
+Log. The 28/20/14pt drift the reviewer flagged is gone.
+
+**7. Top toolbar strip wired.** `RootWindow.toolbar { … }` with a
+`ToolbarItemGroup(placement: .primaryAction)`:
+- `WorkingStatusIndicator` chip ("Working" / "Off hours" with the
+  orange dot for inside-hours). Same data the Available footer pill
+  uses, mirrored into the toolbar so the bit is visible from any
+  pane.
+- Quick-capture button (`plus.circle` + "Quick capture" label) that
+  calls `CapturePaletteSingleton.shared?.show()` — the same path the
+  menu-bar popover's capture button takes, no duplicate plumbing.
+- Search is intentionally NOT shipped as a fake field. A `// TODO:
+  Wire search backend (batch 7)` comment marks the slot per the brief
+  ("don't ship a fake search; if you must stub it, gate behind a
+  `// TODO:` comment"). A disabled placeholder would have read as
+  broken in screenshots; an empty slot reads as future work.
+
+**8 + 9. Inspector column.** New reusable
+`Sources/Moves/Views/Window/InspectorColumn.swift` with three pieces:
+- `InspectorColumn` — fixed-width (280pt) trailing rail, animated in/
+  out via `.transition(.move(.trailing) ∪ .opacity)` keyed off a
+  binding the pane controls. HStack + animated frame, deliberately
+  NOT `HSplitView` (forces a draggable divider and trips up keyboard
+  focus inside the outer `NavigationSplitView` detail) and NOT the
+  window-scoped `.inspector { … }` modifier (one-shot, can't model
+  per-pane selection types).
+- `InspectorDetail` — title + optional subtitle + label/value
+  metadata rows + slotted primary action. One layout, four panes.
+- `InspectorEmptyState` — muted icon + headline + message + one
+  obvious next action button (varies per pane). Covers the
+  "Nothing selected" treatment the brief calls for.
+
+Per-pane wiring (string-typed selection state + `.tag(...)` on rows
++ `List(selection: $selection)`):
+- `AvailableView`: selection → thread title + move text + status/kind
+  metadata + "Open thread" primary. Empty → "Open top thread" CTA.
+- `ThreadsListView`: selection → thread title + breadcrumb + status/
+  kind metadata + "Open thread". Empty → "New thread" CTA that fires
+  `AppSignals.requestNewThreadFlow()` (reuses the Cmd-N path).
+- `CapturedView`: selection → item title + body + kind/status/due
+  metadata + "Mark done". Empty → "Open capture palette" CTA.
+- `DeadlinesView`: selection → item title + thread title + due/state/
+  kind metadata + "Mark done". Empty → no CTA (deadlines are read-
+  mostly; the action is in the row's context menu, not the inspector).
+- `ParkingLotView`: no inspector per the brief ("panes with a
+  selectable row" — parking lot rows have inline Unpark/Open buttons
+  and don't have a useful detail surface yet). Still gets the pane
+  header.
+- `CurrentDetailView`, `WeeklyView`: header only (no list, no
+  inspector — they're already detail-shaped).
+
+Inspector visibility persists per-window via `@SceneStorage` keys
+(`inspector.available.visible`, etc.) so a closed inspector stays
+closed when the user reopens the window, but multiple Moves windows
+don't fight over one global flag. Each pane exposes a header-trailing
+toggle button (`sidebar.right` icon) that flips it.
+
+**File-by-file changes.**
+- `Sources/Moves/Views/Window/PaneMetrics.swift` — new. Grid
+  constants.
+- `Sources/Moves/Views/Window/PaneShell.swift` — added `title`,
+  `count`, `accessory`, `inspector` slots to both `PaneShell` and
+  `PaneListShell`. Generic over closures with `EmptyView`-defaulted
+  overloads so callers that don't want one slot don't pay for it.
+  New private `PaneHeader` view.
+- `Sources/Moves/Views/Window/InspectorColumn.swift` — new.
+  `InspectorColumn`, `InspectorDetail`, `InspectorEmptyState`.
+- `Sources/Moves/Views/Window/RootWindow.swift` — toolbar items;
+  `WorkingStatusIndicator` view.
+- `Sources/Moves/Views/Window/AvailableView.swift`,
+  `ThreadsListView.swift`, `CapturedView.swift`, `DeadlinesView.swift`,
+  `ParkingLotView.swift`, `CurrentDetailView.swift`,
+  `TimeLog/WeeklyView.swift` — adopt new shell API; list panes wire
+  selection + inspector body.
+
+**Gates.** `make check` clean. `make test` green at 183/183 (unchanged
+from batch 1 — no tests removed; no new tests added because the
+changes are purely structural / view-side and the existing
+view/wiring tests cover the data path). `make` produces a valid
+signed `build/Moves.app`.
+
+**Punted: visual gate.** Machine was at the macOS lockscreen again —
+took a `request_access` screenshot to confirm, got the lockscreen.
+Compile + test gates green; the structural changes are conservative
+(generic `PaneShell` API has `EmptyView` defaults so old call sites
+keep compiling; selection bindings are local `@State`; the inspector
+animation is the standard `.move(edge:) + .opacity` transition).
+Hand-off note: re-run `make run` after unlock and confirm the pane
+title row, the toolbar's working-status chip + quick-capture button,
+and the inspector toggle on Available / Threads / Captured /
+Deadlines (selected row → detail; empty → "Nothing selected" with
+CTA).
+
+## 2026-06-09 — UI glow-up batch 1: trust-breaking bugs
+
+Knocked out items 1–4 from `plans/ui-glowup.md` — the trust-breaking
+fit-and-finish bugs that make the app feel broken before the user even
+gets to a feature.
+
+**1. Natural-language parser display lie** (`test API tomorrow at 3pm`
+preview → "Today at 3:00 PM"). Two root causes:
+
+- The parser only recognized `tomorrow <H>` (2 tokens). `tomorrow at 3pm`
+  (3 tokens) silently fell through to the bare `at <H>` rule on the
+  trailing two tokens; the `tomorrow` anchor was dropped, and the title
+  came out as `test API tomorrow`.
+  Added explicit 3-token forms `tomorrow at <H>` and `<weekday> at <H>`
+  to `Sources/Moves/Services/CaptureParser.swift`. Both are `.soft`
+  interruption (matches the existing `tomorrow 9am` / `friday 5pm`
+  conventions). Forms listed in the file's grammar header and tested
+  via `CaptureParserTests` — three new regression cases:
+  `testTomorrowAtThreePM`, `testTomorrowAtBareNineRollsToTomorrow`,
+  `testWeekdayAtFivePM`.
+- The chip's `DateFormatter` used `.medium` dateStyle, which produces
+  long labels like "Jun 10, 2026 at 3:00 PM" when relative formatting
+  doesn't kick in. Switched to `.short` + kept
+  `doesRelativeDateFormatting` so "Today"/"Tomorrow" still substitutes,
+  and added a `.help(absoluteFormatter.string(from:))` tooltip so users
+  can hover to confirm the calendar date — defuses the trust problem
+  even when relative labels are correct. Source:
+  `Sources/Moves/Views/Capture/CapturePaletteView.swift`.
+
+**2. Scheduling phrase stays in the task title.** Falls out of item 1's
+parser fix — once the 3-token form matches, `consumed == 3` strips
+`tomorrow at 3pm` from the title and the preview reads `test API`. No
+separate code change needed; covered by the new parser tests.
+
+**3. Row truncation looks sloppy** (`Write an mOS blog post, or
+something about meta-apps....`). Added `RowSubtitle` in
+`Sources/Moves/Views/Shared/RowSubtitle.swift` — a small view that owns
+the row-subtitle modifier stack (`.foregroundStyle(.secondary)`,
+`.lineLimit(1)`, `.truncationMode(.tail)`) and strips trailing dots /
+horizontal ellipses / whitespace from the source string so SwiftUI's
+tail-truncation isn't fighting a literal `...` the user typed.
+Standardized into the three primary row sites:
+`Sources/Moves/Views/Window/AvailableView.swift`,
+`Sources/Moves/Views/Popover/AvailableSection.swift`,
+`Sources/Moves/Views/Window/ThreadsListView.swift`.
+Sanitizer covered by `RowSubtitleTests` (six cases — triple dot,
+horizontal ellipsis, mixed runs, trailing whitespace around dots,
+interior dots preserved, all-dots → empty).
+
+**4. "New thread…" field reads as disabled.** Rebuilt the inline
+composer at the top of `ThreadsListView`:
+
+- Fill: `.background.secondary` → `.quaternary` (more present against
+  the pane background).
+- Added a `.separator` stroke that becomes accent-tinted on focus —
+  mirrors the macOS focus ring on a plain TextField that doesn't draw
+  its own.
+- Field font `.body` + `.primary` foreground so typed text reads at
+  full contrast. The prompt is supplied via `Text(...)` so SwiftUI
+  picks the right placeholder color for the appearance.
+- Whole row is the hit target: `.contentShape` over the rounded rect
+  and `.onTapGesture { addFocused = true }` so tapping the icon or
+  any padding also focuses the field.
+- "Press ⏎ to add" hint replaces the floating "Add" button when the
+  field is empty so the row stays a single horizontal slot; the
+  prominent "Add" + `keyboardShortcut(.defaultAction)` returns once
+  the user has typed something.
+
+**Gates.** `make check` clean, `make test` green at 183/183 (was 174;
++8 new cases land cleanly — three parser regressions, five sanitizer
+cases — and the prior `testFoo` set is untouched). `make build` produces
+a valid signed `build/Moves.app`.
+
+**Punted: visual gate.** The machine was at the macOS lockscreen
+through this session, so I couldn't drive `build/Moves.app` via
+computer-use to take the four screenshots called for by the punch list
+(capture palette `test API tomorrow at 3pm`, Threads pane composer,
+Available pane subtitle). The compile + test gates and the parser /
+sanitizer unit tests cover the correctness side; the chip-typography
+choices are conservative (`.short` + relative + tooltip) and the row
+modifier is the standard macOS idiom. Hand-off note: re-running
+`make run` after unlock and visually confirming the four states above
+is the only outstanding step.
+
 ## 2026-06-08 — Available pane layout fix
 
 Thomas flagged "the Available pane still isn't aligned and it doesn't

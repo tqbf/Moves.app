@@ -440,10 +440,21 @@ final class AppStore {
   func capture(
     _ input: String,
     now: Date = Date(),
-    offsetsOverride: [Int]? = nil
+    offsetsOverride: [Int]? = nil,
+    dueAtOverride: DueOverride? = nil
   ) async -> ParsedCapture? {
-    let parsed = CaptureParser.parse(input, now: now)
+    var parsed = CaptureParser.parse(input, now: now)
     guard !parsed.title.isEmpty else { return nil }
+
+    // Manual override from the capture overlay's date picker. When set, it
+    // wins over whatever the parser found and clears low-confidence
+    // signaling — the user told us exactly what they meant.
+    if let dueAtOverride {
+      parsed.dueAt = dueAtOverride.dueAt
+      parsed.dueKind = .datetime
+      parsed.interruptionKind = dueAtOverride.interruptionKind
+      parsed.lowConfidence = false
+    }
 
     let dueAtSeconds = parsed.dueAt.map { Int64($0.timeIntervalSince1970) }
     let itemKind: ItemKind = {
@@ -1224,4 +1235,16 @@ final class AppStore {
       return WeeklySummary.empty(weekStart: weekStart)
     }
   }
+}
+
+/// A manual due-date override the capture overlay applies to the next
+/// `AppStore.capture(_:)` call. Carries both the wall-clock moment and the
+/// interruption kind the user wants attached to the item — the overlay
+/// converts the parser's inferred kind into the override kind via the
+/// "is this a hard deadline?" question, but for now we map all manual
+/// overrides to `.hard` (the date-picker is reserved for deadlines that
+/// matter; soft-deadline UX is the parser's domain).
+struct DueOverride: Equatable, Sendable {
+  var dueAt: Date
+  var interruptionKind: InterruptionKind = .hard
 }

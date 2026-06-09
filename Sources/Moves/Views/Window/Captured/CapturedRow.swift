@@ -15,9 +15,11 @@ import SwiftUI
 /// open-question decision).
 struct CapturedRow: View {
   let item: Item
+  /// List-driven selection passed by `CapturedView` so the row paints its
+  /// selected background. Defaults false for any caller that doesn't
+  /// participate in selection.
+  var isSelected: Bool = false
   @Environment(AppStore.self) private var store
-
-  @State private var hovering = false
 
   /// Set non-nil to present the attach-to-thread picker for *this* row.
   @State private var attachingPickerItem: Item?
@@ -25,52 +27,66 @@ struct CapturedRow: View {
   @State private var editingDueItem: Item?
 
   var body: some View {
-    HStack(spacing: 10) {
-      Image(systemName: icon)
-        .foregroundStyle(iconColor)
-        .frame(width: 18)
-
-      VStack(alignment: .leading, spacing: 2) {
-        Text(item.title)
-          .font(.system(size: 14, weight: .medium))
-          .lineLimit(1)
-        HStack(spacing: 8) {
-          Text(item.kind.rawValue.capitalized)
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
-          if let due = dueLabel {
-            Text("· \(due)")
-              .font(.system(size: 11))
-              .foregroundStyle(.secondary)
-          }
+    TaskRow(
+      title: item.title,
+      subtitle: subtitleLine,
+      deadline: deadlineDate,
+      leadingIcon: TaskRowLeadingIcon(
+        systemName: icon,
+        tint: iconColor,
+        accessibilityLabel: iconAccessibilityLabel
+      ),
+      isSelected: isSelected,
+      hoverActions: {
+        // Hover-revealed shortcut to the same Edit-due sheet the
+        // ellipsis menu opens. The ellipsis stays (it owns the larger
+        // processing-actions menu); this is an additive shortcut to the
+        // most common processing action.
+        RowHoverActionButton(systemName: "calendar.badge.clock", help: "Schedule due") {
+          editingDueItem = item
         }
+      },
+      trailing: {
+        Menu {
+          contextMenuActions
+        } label: {
+          Image(systemName: "ellipsis.circle")
+            .font(.system(size: 14))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Actions for \(item.title)")
       }
-
-      Spacer(minLength: 8)
-
-      Menu {
-        contextMenuActions
-      } label: {
-        Image(systemName: "ellipsis.circle")
-          .font(.system(size: 14))
-      }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .accessibilityLabel("Actions for \(item.title)")
-    }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .contentShape(Rectangle())
-    .background(hovering ? Color.primary.opacity(0.05) : Color.clear)
-    .onHover { hovering = $0 }
+    )
     .contextMenu { contextMenuActions }
     .sheet(item: $attachingPickerItem) { item in
       AttachToThreadSheet(item: item) { attachingPickerItem = nil }
     }
     .sheet(item: $editingDueItem) { item in
       EditDueTimeSheet(item: item) { editingDueItem = nil }
+    }
+  }
+
+  /// Subtitle reads as the captured item's kind ("Reminder" / "Task" /
+  /// "Capture") so the reader can scan kind without a separate pill. The
+  /// deadline goes to the trailing `DeadlineChip`, not the subtitle —
+  /// that keeps the deadline vocabulary consistent with Available and
+  /// the Current card.
+  private var subtitleLine: String? {
+    item.kind.rawValue.capitalized
+  }
+
+  private var deadlineDate: Date? {
+    guard let due = item.dueAt else { return nil }
+    return Date(timeIntervalSince1970: TimeInterval(due))
+  }
+
+  private var iconAccessibilityLabel: String {
+    switch item.interruptionKind {
+    case .hard: return "Hard reminder"
+    case .soft: return "Soft reminder"
+    case .none: return "Capture"
     }
   }
 
@@ -113,19 +129,6 @@ struct CapturedRow: View {
     }
   }
 
-  private var dueLabel: String? {
-    guard let due = item.dueAt else { return nil }
-    let date = Date(timeIntervalSince1970: TimeInterval(due))
-    return Self.formatter.string(from: date)
-  }
-
-  private static let formatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateStyle = .short
-    f.timeStyle = .short
-    f.doesRelativeDateFormatting = true
-    return f
-  }()
 }
 
 // MARK: - Attach picker sheet
@@ -205,7 +208,9 @@ private struct AttachToThreadSheet: View {
 
 // MARK: - Edit due time sheet
 
-private struct EditDueTimeSheet: View {
+/// Edit-due sheet — promoted from `private` so the Deadlines pane can
+/// reuse it for its row-level "Edit due" affordance (batch 7, item 27).
+struct EditDueTimeSheet: View {
   let item: Item
   let onClose: () -> Void
   @Environment(AppStore.self) private var store

@@ -2,14 +2,25 @@ import SwiftUI
 
 /// The "Current" section of the popover (INITIAL-PLAN §4.1).
 ///
-/// Shows the current thread's title, the segment line (if regimented), the
-/// breadcrumb (the "Next:" line), and the Stop / Switch / Park action row.
+/// Shows the current thread's title, a single operational metadata line —
+/// elapsed time + started clock time — the optional deadline chip, the
+/// breadcrumb (the "Next:" line), and the Stop / Park action row.
 /// When no thread is current, renders "Not working on anything" neutrally
 /// (§2.6: zero current work is valid; no shame).
 ///
+/// Layout density: this is a 320pt popover surface — the elapsed/started
+/// pair lives on one line ("00:16 · Started 2:14 PM") so the section
+/// doesn't blow out vertically. The main-window Current pane has more
+/// room and uses a larger elapsed display (`CurrentDetailView`).
+///
 /// The Stop button has an `S`-key accelerator wired via
 /// `.keyboardShortcut("s", modifiers: [])` and the hint is rendered inline
-/// so users discover it (Phase 3 plan open question: yes, document inline).
+/// so users discover it.
+///
+/// Button hierarchy (batch 3, item 11): there is no "Open thread" button
+/// in the popover — the popover's `Open` footer button covers main-window
+/// navigation. The popover keeps Stop (`.bordered` + `.red` tint + role
+/// `.destructive`) and Park (`.bordered`, neutral).
 struct CurrentSection: View {
   @Environment(AppStore.self) private var store
   @Environment(\.openWindow) private var openWindow
@@ -35,12 +46,27 @@ struct CurrentSection: View {
     return store.thread(id: id)
   }
 
+  private var startedAtDate: Date? {
+    guard let started = store.current.startedAt else { return nil }
+    return Date(timeIntervalSince1970: TimeInterval(started))
+  }
+
+  private var deadlineDate: Date? {
+    guard let due = currentSegment?.dueAt else { return nil }
+    return Date(timeIntervalSince1970: TimeInterval(due))
+  }
+
   private func activeContent(for thread: Thread) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 6) {
       Text(thread.title)
         .font(.callout)
         .fontWeight(.semibold)
         .lineLimit(1)
+
+      // Operational metadata line: "00:16 · Started 2:14 PM" + optional
+      // orange deadline chip. The elapsed label self-ticks via
+      // TimelineView so the surrounding card doesn't redraw every second.
+      metadataRow
 
       if let segment = currentSegment {
         Text(segment.title)
@@ -58,7 +84,31 @@ struct CurrentSection: View {
       }
 
       actionRow(for: thread)
-        .padding(.top, 2)
+        .padding(.top, 4)
+    }
+  }
+
+  /// Single horizontal line carrying elapsed + started + (optional) due
+  /// chip. Keeps the popover Current section compact.
+  @ViewBuilder
+  private var metadataRow: some View {
+    HStack(spacing: 6) {
+      if let started = startedAtDate {
+        ElapsedTimeLabel(
+          startedAt: started,
+          font: .system(.caption, design: .rounded),
+          foregroundStyle: .primary
+        )
+        Text("·")
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+        Text("Started \(started, format: .dateTime.hour().minute())")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      if let due = deadlineDate {
+        DeadlineChip(dueAt: due, size: .compact)
+      }
     }
   }
 
@@ -74,10 +124,15 @@ struct CurrentSection: View {
     // does not always re-register a `.keyboardShortcut` handler when the
     // enclosing View identity is reused across @Observable updates, so a
     // captured `thread` can go stale right after a Switch.
+    //
+    // Button hierarchy (batch 3): Stop is the destructive terminal action
+    // — `.bordered` with `.tint(.red)` and `role: .destructive`. Park is
+    // a neutral secondary `.bordered`.
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
-        Button("Stop", action: openStopForCurrent)
+        Button("Stop", role: .destructive, action: openStopForCurrent)
           .buttonStyle(.bordered)
+          .tint(.red)
           .keyboardShortcut("s", modifiers: [])
           .help("Stop the current thread (S)")
 
