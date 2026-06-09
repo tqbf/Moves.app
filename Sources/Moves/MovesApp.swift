@@ -64,31 +64,65 @@ struct MovesApp: App {
   /// the `App` level and pass it down via the command-group view.
   @Environment(\.openWindow) private var openWindow
 
-  /// Menu-bar knight glyph. Loads `logo.png` from Resources/, inverts it
-  /// (so the silhouette becomes the bright channel), then runs
-  /// CIMaskToAlpha so the silhouette becomes opaque and the original
-  /// white background becomes alpha=0. The output color isn't relevant —
-  /// `isTemplate = true` tells macOS to ignore color and fill the alpha
-  /// with the menubar tint, which gives us light/dark menu-bar handling
-  /// for free.
+  /// Menu-bar knight glyph. Loads `logo.png` from Resources/, runs
+  /// CIMaskToAlpha to convert its white background to transparent (the
+  /// silhouette becomes the visible ink, everything else is alpha), and
+  /// marks the result as a template image for automatic light/dark
+  /// tinting.
   ///
-  /// build.sh copies logo.png into Contents/Resources/ unconditionally;
-  /// missing it is a build failure, not a runtime branch.
+  /// Falls back to a U+265E NSAttributedString render if the PNG can't
+  /// be loaded (e.g. running tests without Resources/) so the menu-bar
+  /// icon still draws.
   fileprivate static let knightTemplate: NSImage = {
-    let url = Bundle.main.url(forResource: "logo", withExtension: "png")!
-    let raw = NSImage(contentsOf: url)!
-    let cg = raw.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+    makeLogoTemplate(pointSize: 18) ?? legacyKnightTemplate(pointSize: 18)
+  }()
+
+  /// Load `logo.png` from Resources/, invert it (so the silhouette
+  /// becomes the bright channel), then run CIMaskToAlpha so the new
+  /// "bright = opaque" mapping makes the silhouette opaque and the
+  /// original white background transparent. The output color isn't
+  /// relevant — `isTemplate = true` tells macOS to ignore color and
+  /// fill the alpha with the menubar tint.
+  ///
+  /// Returns `nil` if anything fails; the caller falls back to the
+  /// legacy glyph render.
+  private static func makeLogoTemplate(pointSize: CGFloat) -> NSImage? {
+    guard let url = Bundle.main.url(forResource: "logo", withExtension: "png"),
+          let raw = NSImage(contentsOf: url),
+          let cg = raw.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    else { return nil }
     let ci = CIImage(cgImage: cg)
-    let inverted = CIFilter(name: "CIColorInvert", parameters: [kCIInputImageKey: ci])!.outputImage!
-    let masked = CIFilter(name: "CIMaskToAlpha", parameters: [kCIInputImageKey: inverted])!.outputImage!
-    let cgMasked = CIContext().createCGImage(masked, from: masked.extent)!
+    guard
+      let inverted = CIFilter(name: "CIColorInvert", parameters: [kCIInputImageKey: ci])?.outputImage,
+      let masked = CIFilter(name: "CIMaskToAlpha", parameters: [kCIInputImageKey: inverted])?.outputImage,
+      let cgMasked = CIContext().createCGImage(masked, from: masked.extent)
+    else { return nil }
     let aspect = CGFloat(cgMasked.width) / max(CGFloat(cgMasked.height), 1)
-    let pointSize: CGFloat = 18
     let size = NSSize(width: pointSize * aspect, height: pointSize)
     let image = NSImage(cgImage: cgMasked, size: size)
     image.isTemplate = true
     return image
-  }()
+  }
+
+  /// Original U+265E render — kept as a fallback for when logo.png isn't
+  /// bundled (running tests, partial build, etc.).
+  private static func legacyKnightTemplate(pointSize: CGFloat) -> NSImage {
+    let glyph = "\u{265E}"
+    let font = NSFont.systemFont(ofSize: pointSize, weight: .black)
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: NSColor.black,
+    ]
+    let attr = NSAttributedString(string: glyph, attributes: attrs)
+    let bounds = attr.size()
+    let size = NSSize(width: ceil(bounds.width), height: ceil(bounds.height))
+    let image = NSImage(size: size)
+    image.lockFocus()
+    attr.draw(at: .zero)
+    image.unlockFocus()
+    image.isTemplate = true
+    return image
+  }
 
   init() {
     // SwiftPM (Swift 6.3) generates `Bundle.module` as
