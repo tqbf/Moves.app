@@ -38,7 +38,11 @@ struct RootWindow: View {
           }
       }
     }
-    .navigationTitle("Moves")
+    // No navigationTitle — the window title bar is already "Moves" and
+    // every pane's PaneShell renders its own large title. Setting one
+    // here just adds a redundant secondary heading inside the detail
+    // toolbar.
+    .navigationTitle("")
     .task { await store.load() }
     .onChange(of: signals.presentOnboarding) { _, requested in
       if requested {

@@ -34,6 +34,8 @@ struct ThreadsListView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        // See AvailableView for the focus-ring rationale.
+        .focusEffectDisabled()
       }
     }
     .onChange(of: signals.requestNewThread) { _, requested in
@@ -143,10 +145,14 @@ private struct ThreadRowSummary: View {
             .lineLimit(1)
         }
         Spacer(minLength: 8)
-        Text(thread.kind.rawValue.capitalized)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(.tertiary)
-          .monospaced()
+        // Only surface non-default kinds — "Normal" is the implicit
+        // baseline; rendering it on every row was visual noise.
+        if thread.kind != .normal {
+          Text(thread.kind.rawValue.capitalized)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .monospaced()
+        }
       }
       .padding(.vertical, 4)
       .frame(maxWidth: .infinity, alignment: .leading)

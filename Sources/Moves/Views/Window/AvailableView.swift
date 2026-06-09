@@ -47,18 +47,21 @@ struct AvailableView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        // macOS 14 draws a tall focus ring on a focused List inside an
+        // .inset style; on a one-column detail pane it reads as a
+        // mysterious vertical "grid line" pair down the left edge.
+        // We don't use List keyboard focus for selection — rows are
+        // tap-to-open Buttons — so disable the visual effect.
+        .focusEffectDisabled()
       }
     }
   }
 
-  /// "Working: yes/no" pill plus the configured hours range. "Yes" gets
-  /// the orange urgency tint the menubar badge and Upcoming hard-deadline
-  /// icons already use; "no" gets neutral gray. Hours stay visible so the
-  /// user can see the window the answer is being computed against without
-  /// opening Settings. Rendered directly under the PaneListShell header
-  /// rather than through a subtitle slot — the shell's subtitle is a
-  /// plain string by design, and one richer caller doesn't justify
-  /// generic ceremony at every call site.
+  /// "Working: yes/no" pill. "Yes" gets the orange urgency tint the
+  /// menubar badge and Upcoming hard-deadline icons already use; "no"
+  /// stays neutral gray. The configured hours range used to render to
+  /// the right of the pill but added clutter without value — Settings
+  /// is the right place to see/edit the window.
   @ViewBuilder
   private var workingStatus: some View {
     let working = store.isWorkTime
@@ -77,13 +80,6 @@ struct AvailableView: View {
           Capsule(style: .continuous)
             .fill(tint.opacity(0.15))
         )
-      Text("·")
-        .font(.system(size: 13))
-        .foregroundStyle(.tertiary)
-      Text("\(WorkingHours.formatMinute(store.workingHours.startMinute))–\(WorkingHours.formatMinute(store.workingHours.endMinute))")
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
       Spacer()
     }
   }
@@ -132,10 +128,14 @@ private struct AvailableRow: View {
             .lineLimit(1)
         }
         Spacer(minLength: 8)
-        Text(item.thread.kind.rawValue.capitalized)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(.tertiary)
-          .monospaced()
+        // Only surface non-default kinds — "Normal" is the implicit
+        // baseline and showing it on every row was visual noise.
+        if item.thread.kind != .normal {
+          Text(item.thread.kind.rawValue.capitalized)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .monospaced()
+        }
       }
       .padding(.vertical, 4)
       .frame(maxWidth: .infinity, alignment: .leading)

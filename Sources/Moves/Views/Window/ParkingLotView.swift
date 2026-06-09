@@ -34,6 +34,8 @@ struct ParkingLotView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        // See AvailableView for the focus-ring rationale.
+        .focusEffectDisabled()
       }
     }
   }
