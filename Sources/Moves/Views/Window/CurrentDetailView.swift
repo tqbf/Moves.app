@@ -11,7 +11,7 @@ struct CurrentDetailView: View {
   var onSelectThread: (String) -> Void
 
   var body: some View {
-    PaneShell(title: "Current") {
+    PaneShell {
       if let thread = store.thread(id: store.current.threadId ?? "") {
         VStack(alignment: .leading, spacing: 14) {
           VStack(alignment: .leading, spacing: 6) {

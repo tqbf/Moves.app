@@ -8,10 +8,7 @@ struct CapturedView: View {
   @Environment(AppStore.self) private var store
 
   var body: some View {
-    PaneListShell(
-      title: "Captured",
-      subtitle: "\(store.capturedItems.count) item\(store.capturedItems.count == 1 ? "" : "s")"
-    ) {
+    PaneListShell {
       if store.capturedItems.isEmpty {
         ContentUnavailableView(
           "Inbox is empty",
@@ -33,8 +30,7 @@ struct CapturedView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        // See AvailableView for the focus-ring rationale.
-        .focusEffectDisabled()
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
     }
   }

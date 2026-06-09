@@ -1,0 +1,299 @@
+# UI-NITS
+
+A running log of the UI feedback Thomas has given on Moves, written down so
+future agents can synthesize general rules out of it instead of relitigating
+each individual nit.
+
+Each entry: the **observation** (verbatim or close), the **rule it implies**,
+and the **concrete change** that landed. Group entries by theme.
+
+---
+
+## Don't repeat the sidebar
+
+> "Threads is wildly too prominent on the screen, it's static text that does
+> nothing but label the pane."
+>
+> "what does this heading accomplish" *(arrow pointing at the window-level
+> "Moves" navigation title)*
+
+**Rule.** The sidebar already labels the current pane. A second giant heading
+("Threads" / "Available" / "Captured") inside the content area is redundant
+chrome that fights with actual content for the reader's eye. Pane titles do
+not earn their visual weight when the surrounding UI already names the pane.
+
+**Landed:**
+- `RootWindow` no longer sets `.navigationTitle("Moves")` — the window title
+  bar already says "Moves".
+- `PaneShell` and `PaneListShell` no longer accept a `title` parameter. The
+  shells are pure layout wrappers; each pane renders only its actual content
+  + the small captions that carry real information (e.g. the "Working" pill).
+
+**Generalize.** Whenever you're about to write a section/page title that just
+restates what the surrounding UI already conveys, delete it. Save large
+headings for content that wouldn't otherwise be findable.
+
+---
+
+## Don't render implicit defaults
+
+> "don't render the default state, just NOT 'normal'" *(on the kind label
+> appearing on every thread row)*
+
+**Rule.** When a property has an "obvious default" value, don't render the
+default on every row. Render only deviations from the default — those are
+the values that carry information.
+
+**Landed.** Thread rows in `AvailableView` and `ThreadsListView` only show
+`thread.kind.rawValue.capitalized` when `kind != .normal`. "Regimented"
+still surfaces because it's not the default; "Normal" stays invisible.
+
+**Generalize.** Apply the same rule to visibility (don't render "Normal"),
+status when implied by context, and any future enum where one case is the
+obvious baseline.
+
+---
+
+## Strip noise from subtitles
+
+> "???" *(arrow at the "09:00–17:30" hours range trailing the Working pill)*
+
+**Rule.** A subtitle should answer one at-a-glance question. Tacking on
+contextual info "for completeness" turns the subtitle into a dashboard, and
+the eye starts skipping it. If the extra info lives elsewhere (Settings, the
+sidebar, the toolbar), don't restate it here.
+
+**Landed.** The Available pane's Working pill dropped the `· 09:00–17:30`
+trailing text. The pill answers "am I in working hours now?"; the configured
+hours live in Settings, one Cmd-, away.
+
+**Generalize.** Pane subtitles + caption lines should be one bite. If you're
+typing a "·" separator inside a subtitle, ask whether the second piece is
+really needed.
+
+---
+
+## Affordances must be visible
+
+> "it's not clear the titles of Threads are editable in the UI"
+
+**Rule.** Editable text needs a visual signal that it's editable. A plain
+`TextField(.plain)` at large weight is indistinguishable from a static
+`Text`. Hover state, focus border, edit icon — pick at least one.
+
+**Landed.** The thread-detail title now has:
+- Hover: soft `Color.primary.opacity(0.04)` background + a `pencil` SF
+  Symbol fades in on the right.
+- Focus: `textBackgroundColor` fill + accent-color stroke border; the
+  pencil hides because the caret becomes the active edit signal.
+
+**Generalize.** The same hover-+-focus chrome pattern is the macOS-native
+"inline rename" idiom (Finder, Notes). Use it wherever a label doubles as
+an edit field.
+
+---
+
+## Don't make the user do silent bookkeeping
+
+> "cmd-n quietly adds an unnamed thread; it should switch to some affordance
+> for naming the thread immediately"
+
+**Rule.** A "new item" command should leave the user inside the naming
+affordance, not insert a placeholder row labeled "Untitled" that the user
+has to track down and rename.
+
+**Landed.** Cmd-N now:
+1. Brings the main window forward (`NSApp.activate`).
+2. Switches the sidebar to `.threadsList`.
+3. Focuses the existing inline "New thread…" `TextField`.
+No row is inserted until the user types and presses Return.
+
+**Generalize.** Every "create" command should land focus where the user
+will type the name. Two-finger trackpad inertia is acceptable; an
+extra "find and rename Untitled 7" step is not.
+
+---
+
+## Use standard platform conventions
+
+> "cmd-[ (back) from the thread/view editor should take me back to the list
+> of threads"
+>
+> "wire settings to idiomatic CMD-, stuff, not a special settings thing in
+> a sidebar that makes this look like a Qt app i've ported"
+>
+> "give all the fields in the main app, where we have entries, the standard
+> swipe-left-to-reveal-delete-button behavior"
+
+**Rule.** Don't invent new conventions for things that already have a macOS
+convention. Cmd-, opens Settings. Cmd-[ goes back. Cmd-? opens Help. Lists
+get swipe-actions, not custom delete buttons. Settings windows have a
+toolbar of tab icons, not a sidebar destination.
+
+**Landed:**
+- `Settings { … }` scene for Cmd-, + the standard Moves → Settings… menu
+  item. Sidebar destination removed.
+- `Cmd-[` ("Back to Threads") under View menu via `.focusedSceneValue` so
+  it auto-disables when not on a thread detail.
+- Native `List` + `.swipeActions(edge: .trailing, role: .destructive)` on
+  every main-window list pane.
+- Settings panes use `Form` + `.formStyle(.grouped)` + `LabeledContent`
+  (the System Settings shape), not card dashboards.
+
+**Generalize.** If a macOS app you respect already does this, look at how
+they do it before designing a new shape.
+
+---
+
+## Empty states need proportional space
+
+> "start up with a smaller default window size; right now the empty state
+> in each of our panes looks goofy because the window is so large (it looks
+> badly laid out)"
+
+**Rule.** A `ContentUnavailableView` (or any centered empty-state) needs
+the surrounding window to be sized so the empty state reads as deliberate,
+not stranded. A vast white canvas around a tiny centered "Nothing
+available" looks like sloppy layout, not intentional minimalism.
+
+**Landed.** Default window size dropped from 980×640 to 800×540. A
+`WindowSizeInitializer` `NSViewRepresentable` forces this on first launch
+because SwiftUI's `.defaultSize` is ignored when the scene's content is a
+`NavigationSplitView` — the split view's intrinsic ideal-width sum wins
+otherwise.
+
+**Generalize.** Default-size your windows for the *empty* case, not the
+fully-populated case. Users grow into the window; they shouldn't have to
+shrink it on first launch.
+
+---
+
+## Don't port other platforms
+
+> "wire settings to idiomatic CMD-, stuff, not a special settings thing in
+> a sidebar that makes this look like a Qt app i've ported"
+>
+> "gross. don't do a split screen here." *(on the Markdown editor)*
+
+**Rule.** Sidebar destinations for things macOS hosts elsewhere read as a
+Linux/Windows/web app port. Side-by-side editor+preview reads as a
+Markdown demo (Typora, MacDown) rather than a notes field embedded in a
+larger app. Choose the native macOS shape.
+
+**Landed:**
+- Settings → system Settings scene.
+- Markdown notes → preview-first single card with a pencil edit affordance
+  that flips into a source editor. No split.
+
+**Generalize.** Before adding a split view / dashboard / "config sidebar",
+look at native Mail / Notes / Reminders / System Settings and ask what
+shape they'd reach for.
+
+---
+
+## Preview-first for read-mostly content
+
+> "Display the rendered markdown with an edit affordance (a button/icon or
+> something) and switch to the editor when it's clicked; if there's no
+> markdown note yet, only show the editor until one is created."
+
+**Rule.** When content is mostly read and occasionally edited, default to
+the rendered view + an edit affordance. Don't dump the user into the
+editor every time they look at the thread. But: empty source must default
+to the editor — there's nothing to preview, so an "edit it" button on a
+blank canvas is a no-op.
+
+**Landed.** `MarkdownEditorView` defaults to preview when source is
+non-empty, with a pencil icon in the top-right corner. Pencil → editor; a
+blue "Done" pill (also bound to ⌘↩) → back to preview. Empty source forces
+editor mode and hides the pencil. Mode is sticky for the session — no
+auto-snap-back interrupting a long edit.
+
+**Generalize.** Apply the same shape to any future rich-text field where
+read >> edit (segment body, thread notes, captured-item bodies).
+
+---
+
+## Urgency vocabulary: orange = "needs your attention"
+
+> *On working hours:* "'outside working hours' should be 'Working: [no]'
+> with some color highlight or whatever over 'no' or 'yes' ('yes' is the
+> more urgent state)"
+
+**Rule.** The orange tint already has a meaning in this app: hard-deadline
+items badge orange in the menu bar; Upcoming hard-deadline icons render
+orange. Use orange for "this is the more interrupting state." Use neutral
+gray for "you're at rest." Don't invent a new color for new states.
+
+**Landed.** The Working pill is orange-tinted when the user is inside
+working hours (the more interrupting state); neutral-gray when outside.
+Same `tint.opacity(0.15)` background + tinted text idiom as the deadline
+chip in `CapturePaletteView`.
+
+**Generalize.** Before reaching for a new color, ask whether one of the
+existing colors already means what you want.
+
+---
+
+## Alignment: same x for stacked content
+
+> *(Annotated screenshot: two vertical guide lines drawn over the pane,
+> showing the title at one x and the row content at another. Caption:
+> "what's going on with this grid here?")*
+
+**Rule.** Stacked text inside a pane should share a left edge. When the
+pane title is at 28pt but list rows are at the List's natural inset
+(~10–12pt), the misalignment reads as a layout bug, even if the eye can't
+articulate why.
+
+**Landed.** Every list-based pane applies
+`.listRowInsets(EdgeInsets(leading: 28, trailing: 28, …))` so row content
+aligns with the captions above it. (The pane titles themselves are
+also gone, per the earlier "don't repeat the sidebar" entry — that
+removed half the alignment problem too.)
+
+**Generalize.** When stacking custom content above a `List` with
+`.listStyle(.inset)`, either match the list's natural inset on your
+custom content or override the row insets to match your custom content's
+left edge.
+
+---
+
+## Document the model in-app
+
+> "write a help system that documents all the ideas in this app (in
+> particular: threads vs. 'items' (what's that) vs 'tasks', what to do
+> with things just captured, &c) — pull from INITIAL-PLAN.md for the
+> core ideas"
+
+**Rule.** If the product is opinionated about a vocabulary, the
+vocabulary needs to be teachable inside the app — not buried in a spec
+file. A user shouldn't have to read the README to know what "thread"
+or "item" means.
+
+**Landed.** Help → "Moves Help" (Cmd-?) opens a 600×700 window with
+ten sections lifted from INITIAL-PLAN: what Moves is, threads, items
+(captures/tasks/reminders), the capture hotkey, Current vs Available,
+breadcrumbs, deadlines, working hours, the regimented-Markdown import
+format, and "what Moves is NOT." Tone matches the spec — opinionated,
+terse, no filler.
+
+**Generalize.** Concepts get an in-app Help section. Formats get an
+in-app Help section. Keyboard shortcuts get menu items so they're
+discoverable, not just memorizable.
+
+---
+
+## Working notes (no rule yet, but worth recording)
+
+- **PaneShell/PaneListShell are now pure layout wrappers** (no title,
+  no subtitle, no view-builder slots). The Phase-A Tom's Laws audit
+  caught the generic ceremony version and rolled it back; the followup
+  here finished the job.
+- **List vs ScrollView matters for swipe-actions.** `.swipeActions`
+  only fires inside a `List`/`Form`. When converting `VStack { ForEach }`
+  to a list, use `PaneListShell` (no enclosing ScrollView) — not the
+  ScrollView-wrapping `PaneShell`.
+- **`.defaultSize` is broken on `NavigationSplitView`.** SwiftUI prefers
+  the split view's intrinsic ideal-width sum. `WindowSizeInitializer` is
+  the workaround until Apple fixes it.

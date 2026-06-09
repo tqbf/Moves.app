@@ -17,7 +17,7 @@ struct AvailableView: View {
   var onSelectThread: (String) -> Void
 
   var body: some View {
-    PaneListShell(title: "Available") {
+    PaneListShell {
       workingStatus
         .padding(.horizontal, 28)
         .padding(.bottom, 12)
@@ -47,12 +47,11 @@ struct AvailableView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        // macOS 14 draws a tall focus ring on a focused List inside an
-        // .inset style; on a one-column detail pane it reads as a
-        // mysterious vertical "grid line" pair down the left edge.
-        // We don't use List keyboard focus for selection — rows are
-        // tap-to-open Buttons — so disable the visual effect.
-        .focusEffectDisabled()
+        // Align row content to the 28pt grid the Working pill above
+        // uses. .inset style adds its own internal inset; listRowInsets
+        // overrides it so the row text starts at exactly 28pt — same
+        // x as the pill caption.
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
     }
   }

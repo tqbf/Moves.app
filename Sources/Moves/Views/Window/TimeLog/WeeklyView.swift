@@ -16,7 +16,7 @@ struct WeeklyView: View {
   @State private var summary: WeeklySummary = .empty(weekStart: "")
 
   var body: some View {
-    PaneShell(title: "Time Log", subtitle: subtitleText) {
+    PaneShell {
       navigator
       content
     }

@@ -19,10 +19,7 @@ struct ThreadsListView: View {
   @Bindable private var signals = AppSignals.shared
 
   var body: some View {
-    PaneListShell(
-      title: "Threads",
-      subtitle: "\(store.threads.count) total · \(store.activeCount) active"
-    ) {
+    PaneListShell {
       VStack(spacing: 0) {
         newRow
           .padding(.horizontal, 28)
@@ -34,8 +31,9 @@ struct ThreadsListView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        // See AvailableView for the focus-ring rationale.
-        .focusEffectDisabled()
+        // Align row content to the 28pt grid the PaneListShell header
+        // and the new-thread card above already use.
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
     }
     .onChange(of: signals.requestNewThread) { _, requested in

@@ -9,10 +9,7 @@ struct ParkingLotView: View {
 
   var body: some View {
     let parked = store.threads(matching: .parked)
-    PaneListShell(
-      title: "Parking Lot",
-      subtitle: "\(parked.count) parked thread\(parked.count == 1 ? "" : "s")"
-    ) {
+    PaneListShell {
       if parked.isEmpty {
         ContentUnavailableView(
           "Nothing parked",
@@ -34,8 +31,7 @@ struct ParkingLotView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        // See AvailableView for the focus-ring rationale.
-        .focusEffectDisabled()
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
     }
   }
