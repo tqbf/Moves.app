@@ -57,6 +57,15 @@ struct AlertRepository: Sendable {
     }
   }
 
+  /// Drop every alert row for a given item. Used by `AppStore.editDueAt`
+  /// before re-scheduling: a user revising the offset chip selection
+  /// effectively replaces their prior schedule, not appends to it.
+  func deleteForItem(itemId: String) async throws {
+    try await db.execute("DELETE FROM alerts WHERE item_id = ?;") { stmt in
+      stmt.bindText(itemId, at: 1)
+    }
+  }
+
   // MARK: - Row mapping
 
   private static let selectColumns = "SELECT id, item_id, offset_minutes, fired_at"

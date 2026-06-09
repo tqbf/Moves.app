@@ -5,10 +5,11 @@ import UserNotifications
 /// Owns scheduling, snoozing, and cancellation; persists `Alert.fired_at`
 /// after delivery so launch-time reconciliation in phase 6 has a record.
 ///
-/// One alert per item in v1: at due time. INITIAL-PLAN §8.3 documents
-/// configurable offsets but defers them past v1; only the "at due time"
-/// default policy is realized here. Snooze offsets are 5m / 15m / 1h
-/// (INITIAL-PLAN §16).
+/// Multi-alert v1.1: `scheduleAlerts(item:offsetsMinutes:)` schedules one
+/// notification per (positive future) offset, persisting one `Alert` row
+/// each. Offsets <= 0 represent "at due time" or already-past fires and
+/// are skipped if the resolved fire date is not in the future. Snooze
+/// offsets are 5m / 15m / 1h (INITIAL-PLAN §16).
 ///
 /// Notification authorization is requested lazily — on the first capture
 /// that schedules a reminder, not on launch (Phase 2 decision). If the user
@@ -93,8 +94,7 @@ final class ReminderScheduler {
 
   /// Refresh `authorizationStatus` from the OS. Cheap; safe at any time.
   func refreshAuthorizationStatus() async {
-    let settings = await center.notificationSettings()
-    authorizationStatus = settings.authorizationStatus
+    authorizationStatus = await center.currentAuthorizationStatus()
   }
 
   /// Request `.alert + .sound` authorization. Idempotent — calling after a
@@ -120,33 +120,91 @@ final class ReminderScheduler {
 
   // MARK: - Scheduling
 
-  /// Schedule a single notification for an item at its `due_at`. Persists a
-  /// matching `Alert(offsetMinutes: 0)` row so phase-6 reconciliation has a
-  /// record. Returns the created alert ID.
-  ///
-  /// If the item has no `due_at`, this is a no-op and returns nil.
-  /// If notifications are denied, the alert row is still recorded but no
-  /// OS-level notification is scheduled.
+  /// Convenience: schedule a single at-due notification for `item`. Equivalent
+  /// to `scheduleAlerts(item: item, offsetsMinutes: [0])`. Returns the created
+  /// alert ID (the first, and only, element of the result), or nil when the
+  /// item has no `due_at` or the at-due fire would be in the past.
   @discardableResult
   func scheduleAtDue(item: Item) async throws -> String? {
-    guard let dueAt = item.dueAt else { return nil }
-    let alert = Alert(itemId: item.id, offsetMinutes: 0)
-    try await alertRepository.insert(alert)
+    let ids = try await scheduleAlerts(item: item, offsetsMinutes: [0])
+    return ids.first
+  }
 
-    let granted = await requestAuthorizationIfNeeded()
-    guard granted else { return alert.id }
+  /// Schedule one notification per offset for `item`. For each offset:
+  ///
+  /// - `fireDate = item.dueAt - offset*60`. If `fireDate <= now`, the offset
+  ///   is skipped (no Alert row, no OS notification). The
+  ///   `AlertReconciliation` + badge query handle past-due state.
+  /// - Otherwise: insert an `Alert(itemId:, offsetMinutes:)` row and schedule
+  ///   a `UNTimeIntervalNotificationTrigger` with the
+  ///   `moves.item.<itemId>.alert.<alertId>` identifier.
+  /// - Notification body is "Due in <label>" when offset > 0 (e.g. "Due in
+  ///   15m before"). The offset=0 case has no body — title-only.
+  ///
+  /// Offsets are de-duplicated and sorted descending (earliest fire first).
+  /// If the item has no `due_at`, this is a no-op and returns an empty array.
+  /// If authorization is denied, Alert rows are still recorded but no OS-level
+  /// notifications are scheduled.
+  ///
+  /// Returns the list of created alert IDs in fire-order.
+  @discardableResult
+  func scheduleAlerts(item: Item, offsetsMinutes: [Int]) async throws -> [String] {
+    guard let dueAt = item.dueAt else { return [] }
+    // De-duplicate and sort descending so the earliest-fire (largest offset)
+    // is scheduled first. Stable order keeps tests deterministic.
+    let unique = Array(Set(offsetsMinutes)).sorted(by: >)
+    guard !unique.isEmpty else { return [] }
 
     let dueDate = Date(timeIntervalSince1970: TimeInterval(dueAt))
-    let interval = max(1, dueDate.timeIntervalSinceNow)
-    let content = makeContent(title: item.title, body: nil, itemId: item.id, alertId: alert.id)
-    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-    let request = UNNotificationRequest(
-      identifier: notificationIdentifier(itemId: item.id, alertId: alert.id),
-      content: content,
-      trigger: trigger
-    )
-    try await center.add(request)
-    return alert.id
+    let now = Date()
+
+    let granted = await requestAuthorizationIfNeeded()
+
+    var createdIds: [String] = []
+    for offset in unique {
+      let fireDate = dueDate.addingTimeInterval(TimeInterval(-offset * 60))
+      // Skip past fires entirely — no Alert row either, since reconciliation
+      // would just mark it fired immediately.
+      guard fireDate > now else { continue }
+
+      let alert = Alert(itemId: item.id, offsetMinutes: offset)
+      try await alertRepository.insert(alert)
+      createdIds.append(alert.id)
+
+      guard granted else { continue }
+
+      let interval = max(1, fireDate.timeIntervalSinceNow)
+      let body: String? = offset > 0 ? "Due in \(Self.dueInLabel(offsetMinutes: offset))" : nil
+      let content = makeContent(title: item.title, body: body, itemId: item.id, alertId: alert.id)
+      let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+      let request = UNNotificationRequest(
+        identifier: notificationIdentifier(itemId: item.id, alertId: alert.id),
+        content: content,
+        trigger: trigger
+      )
+      try await center.add(request)
+    }
+    return createdIds
+  }
+
+  /// Terse human label for the notification body. "15m" / "1h" / "1d" /
+  /// "1h 30m". Mirrors `AlertOffsetLabel.describe` shape but without the
+  /// "before"/"at due time" suffix — those don't fit the "Due in …" frame.
+  static func dueInLabel(offsetMinutes: Int) -> String {
+    let m = max(0, offsetMinutes)
+    if m < 60 { return "\(m)m" }
+    if m < 24 * 60 {
+      let hours = m / 60
+      let rest = m % 60
+      if rest == 0 { return "\(hours)h" }
+      return "\(hours)h \(rest)m"
+    }
+    let days = m / (24 * 60)
+    let rest = m % (24 * 60)
+    if rest == 0 { return "\(days)d" }
+    let hours = rest / 60
+    if hours == 0 { return "\(days)d" }
+    return "\(days)d \(hours)h"
   }
 
   /// Cancel any pending OS notification for this item, but leave the
@@ -221,7 +279,11 @@ final class ReminderScheduler {
 /// `UNUserNotificationCenter` adopts this trivially.
 @MainActor
 protocol UNUserNotificationCenterProtocol: AnyObject, Sendable {
-  func notificationSettings() async -> UNNotificationSettings
+  /// The current authorization status. Real implementations forward
+  /// `notificationSettings().authorizationStatus`; the seam lets fakes
+  /// return a status without constructing `UNNotificationSettings` (which
+  /// has no public init).
+  func currentAuthorizationStatus() async -> UNAuthorizationStatus
   func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
   func setNotificationCategories(_ categories: Set<UNNotificationCategory>)
   func add(_ request: UNNotificationRequest) async throws
@@ -229,4 +291,9 @@ protocol UNUserNotificationCenterProtocol: AnyObject, Sendable {
   func removePendingNotificationRequests(withIdentifiers: [String])
 }
 
-extension UNUserNotificationCenter: UNUserNotificationCenterProtocol {}
+extension UNUserNotificationCenter: UNUserNotificationCenterProtocol {
+  func currentAuthorizationStatus() async -> UNAuthorizationStatus {
+    let settings = await notificationSettings()
+    return settings.authorizationStatus
+  }
+}

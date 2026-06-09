@@ -9,6 +9,95 @@ and the **concrete change** that landed. Group entries by theme.
 
 ---
 
+## A `PaneListShell` host with multiple sibling views distributes height
+
+**Observation.** "the Available pane still isn't aligned and it doesn't
+make sense how it's laid out". The pane showed "Working: no" at the top
+and the single available row pushed to the bottom-third of the pane,
+with a huge mysterious gap between them.
+
+**Rule.** `PaneListShell` applies
+`.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)`
+to its `content()` builder. When the caller emits **two siblings** in the
+builder (e.g. a header view AND a List), SwiftUI wraps them in a TupleView
+and applies the modifier to each child. Inside the shell's enclosing
+VStack, both children become greedy and split available vertical space —
+the header pins to its top alignment, the List pins to its top
+alignment, but the VStack hands each ~half the height, so the List sits
+in the lower half. Wrapping the two siblings in an inner `VStack(spacing:
+0) { … }` collapses them into a single greedy child, letting intrinsic
+heights flow normally.
+
+**Landed.**
+- `AvailableView` wraps its body in an inner VStack (same fix
+  `ThreadsListView` already had).
+- The "Working: yes/no" pill moved to a `.safeAreaInset(edge: .bottom)`
+  footer (Mail connection-status / Reminders completion-summary
+  pattern). Background is `.bar`, text is `.caption` /
+  `.caption2.weight(.semibold)`. Less prominent than its prior top
+  position, and never fights the row List for height.
+- Dropped the empty top-level `Section { ForEach }` wrapper in the
+  Available list. An inset-style List with no header was still spending
+  Section header height for nothing. Now the visible rows render flat
+  and the "De-emphasized during working hours" subsection still gets
+  its own meaningful header.
+- Row `listRowInsets` leading went 28 → 20 to match the inset-list
+  default.
+
+**Generalize.** When a pane needs a header (or footer) that sits beside
+a List, either (a) wrap header + List in an inner VStack, or
+(b) attach the header/footer via `.safeAreaInset(edge:)`. Don't drop
+two greedy siblings directly into `PaneListShell.content()`.
+
+---
+
+## Don't override system control typography
+
+**Rule.** When a control wraps a `Toggle(.button)` / `Button` /
+`Menu` at `.controlSize(.small)`, the system already picks the right
+font size and weight for that control class. Slapping
+`.font(.system(size: 11, weight: .medium))` on the label fights the
+system metric, drops out of Dynamic Type scaling, and produces
+inconsistent typography across the same idiom (filter pills in Mail,
+System Settings "Filter by" pills).
+
+**Landed.**
+- `AlertOffsetChipRow` — dropped the explicit chip-label font; the
+  toggle's small-button style now resolves automatically.
+- The row's leading "Alert me:" label and the edit-due sheet's
+  "Alert me" label both moved from `.font(.system(size: 11))` to the
+  semantic `.font(.caption)`, matching the rest of the popover and
+  capture-palette hints.
+
+**Generalize.** Reach for semantic fonts (`.caption`, `.callout`,
+`.body`, `.headline`) before reaching for `.font(.system(size: …))`.
+The numeric form should only appear when there's no semantic match —
+the 22pt Spotlight-style capture input is the legitimate exception.
+
+---
+
+## Animate transitions with a `value:`-bound trigger
+
+**Rule.** `.transition(.opacity)` on a conditionally-rendered subview
+is dormant unless an enclosing modifier provides an animation context
+keyed on the same condition. Without it, the transition declaration
+is decorative — the view pops in instantly. SwiftUI animates state
+changes only when the surrounding view tree declares an animation,
+either via `withAnimation` at the mutation site or
+`.animation(_:value:)` on the container.
+
+**Landed.** Capture palette's chip row had `.transition(.opacity)`
+but no animation context. Added a derived `chipRowVisible: Bool`
+and an `.animation(.easeOut(0.18), value: chipRowVisible)` on the
+parent VStack. The chip row now fades + slides in when a deadline
+is first recognized.
+
+**Generalize.** Every `.transition(…)` needs a paired `.animation(_:
+value:)` on a container watching whatever state controls the
+view's appearance, or it's silently a no-op.
+
+---
+
 ## Don't repeat the sidebar
 
 > "Threads is wildly too prominent on the screen, it's static text that does
@@ -281,6 +370,92 @@ terse, no filler.
 **Generalize.** Concepts get an in-app Help section. Formats get an
 in-app Help section. Keyboard shortcuts get menu items so they're
 discoverable, not just memorizable.
+
+---
+
+## Per-item alert offsets are first-class UI
+
+> "when i add an item with a deadline, somewhere in the ui i need to be able
+> to say how far in advance of the deadline i should get alerted (15m, 30m,
+> 1hr, etc). multiple alerts."
+
+**Rule.** The Settings → Alerts pane stores *defaults*. Deadline-bearing
+items need a per-item override surface at the moment the deadline is set,
+not buried two windows deep in preferences. Apply this anywhere a
+preference's default is silently expanded into something the user might
+want to bias one captured item at a time.
+
+**Landed.**
+- New `AlertOffsetChipRow` (`Views/Shared/`): canonical chip set
+  `[0, 15, 30, 60, 120, 24*60]` rendered as `Toggle(isOn:)`
+  `.toggleStyle(.button)` `.controlSize(.small)`. Selected = filled
+  accent button, unselected = bordered grey button. Each chip carries
+  short copy: "At due", "15m", "30m", "1h", "2h", "Morning of".
+- **Capture palette:** chip row appears on its own line below the
+  deadline-preview chip whenever the live parse recognized a `dueAt`.
+  Leading "Alert me:" caption in `.system(size: 11)` `.secondary`.
+  Seeded from `AppStore.offsetsForCapture(kind:)` for the inferred kind;
+  reseeds when the inferred kind changes mid-typing, but only when it
+  actually changes — keystroke noise on the title doesn't wipe a
+  user's selection.
+- **Capture palette panel widened** from 540pt to 620pt to fit all six
+  chips on a single line without truncation. Hosting controller now
+  uses `sizingOptions = [.preferredContentSize]` so the panel grows
+  vertically when the chip row appears.
+- **Edit-due sheet:** chip row appears under the DatePicker when "Has
+  deadline" is on. Caption "Alert me" in 11pt secondary directly above
+  the chips (no `LabeledContent` — the chip row is wider than a typical
+  control), prefilled from the item's existing Alert rows (falls back
+  to kind defaults if no rows exist). Sheet widened from 340pt to
+  360pt for the chip row.
+- **Empty selection floor:** the user can deselect every chip, but on
+  save we treat `[]` as `[0]`. Deadline-bearing items never save with
+  zero scheduled alerts.
+
+**Generalize.** Whenever a setting is "list of values applied per item,"
+surface the choice next to the trigger (the date picker, the deadline
+preview), not in a global Settings tab. Settings holds the *default*;
+the per-item surface holds the *override*.
+
+---
+
+## Menubar conveys three urgency states, not two
+
+> "some visual indication in the menu bar that a deadline is NEAR or
+> OVERDUE."
+
+**Rule.** A binary "urgent / not urgent" badge can't distinguish
+"approaching" from "absent." Reserve red for the past-tense state
+(overdue, can't fix it by hurrying) and use orange for the pre-tense
+state (near, you can still act). This matches the existing app
+vocabulary established under "Urgency vocabulary: orange = 'needs
+your attention'" — and Apple HIG, which calls out system red
+`#FF3B30` / `#FF453A` for destructive/urgent and system orange
+`#FF9500` / `#FF9F0A` for warning.
+
+**Landed.** Three-state menubar driven by
+`AppStore.renderedDeadlineUrgency`:
+
+- **Neutral.** Template knight, system tint. No chip.
+- **Near.** Knight tinted **system orange** (`Color.orange`). No
+  count chip — a tint-only "approaching" signal, not a precise
+  count. Triggered when any hard `captured`/`open` item is due in
+  the strict-future window `(now, now + 30 min]`.
+- **Overdue.** Knight tinted **system red** (`Color.red`) plus the
+  existing red `•N` count chip. Same 1-hour overdue cap as before:
+  once the item is more than an hour past due, it falls out of the
+  bucket and the menubar returns to neutral / near.
+
+Popover header mirrors the same state machine in matching language:
+
+- Overdue → "**•N overdue**" in red.
+- Near → "**•N soon**" in orange.
+- Neutral → no chip.
+
+**Generalize.** When a chrome surface conveys a state, ask whether
+the user can act *before* vs. *after* the event. Pre-event states
+get warning colors (orange/yellow); post-event states get urgency
+colors (red). They are different in kind and shouldn't share a tint.
 
 ---
 

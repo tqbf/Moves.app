@@ -147,6 +147,165 @@ final class PersistenceRoundTripTests: XCTestCase {
     XCTAssertNil(gone)
   }
 
+  /// Boundary test for the 1-hour overdue cap on the badge query: items
+  /// up to 60 minutes past due_at count, anything older does not. The
+  /// user's framing: "overdue status only matters for an hour, and then
+  /// stop flagging it."
+  func testDueOrOverdueHardCountCapsAtOneHour() async throws {
+    let db = try openDatabase()
+    let items = ItemRepository(database: db)
+
+    let now: Int64 = 1_780_493_400 // fixture: 2026-06-08 14:30 UTC
+
+    // 30 minutes overdue — should count.
+    let recent = Item(
+      title: "30m overdue",
+      status: .open,
+      kind: .reminder,
+      dueAt: now - 30 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // 90 minutes overdue — should NOT count.
+    let stale = Item(
+      title: "90m overdue",
+      status: .open,
+      kind: .reminder,
+      dueAt: now - 90 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // Future hard item — should NOT count (existing behavior).
+    let future = Item(
+      title: "in 10m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 10 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await items.insert(recent)
+    try await items.insert(stale)
+    try await items.insert(future)
+
+    let count = try await items.dueOrOverdueHardCount(now: now)
+    XCTAssertEqual(count, 1, "only the 30-minute-overdue item should count toward the badge")
+
+    // Boundary: exactly 60 minutes overdue is still inside the window.
+    let edge = Item(
+      title: "60m overdue",
+      status: .open,
+      kind: .reminder,
+      dueAt: now - 3600,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await items.insert(edge)
+    let withEdge = try await items.dueOrOverdueHardCount(now: now)
+    XCTAssertEqual(withEdge, 2, "60-minute-overdue boundary should count (>= now - 3600)")
+  }
+
+  /// `dueSoonHardCount` counts hard items whose `due_at` is in the strict
+  /// future window `(now, now + soonWindow]`. Excludes past-due
+  /// (`dueOrOverdueHardCount`'s territory), exclusive lower bound at
+  /// exactly `now`, inclusive upper bound at exactly `now + window`,
+  /// honors the status + interruption-kind filter.
+  func testDueSoonHardCountWindowBoundaries() async throws {
+    let db = try openDatabase()
+    let items = ItemRepository(database: db)
+
+    let now: Int64 = 1_780_493_400 // 2026-06-08 14:30 UTC fixture
+    let window: Int64 = 30 * 60
+
+    // Inside the window: 10m, 20m, 29m ahead — hard + open/captured.
+    let inTen = Item(
+      title: "10m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 10 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    let inTwenty = Item(
+      title: "20m",
+      status: .captured,
+      kind: .reminder,
+      dueAt: now + 20 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    let inTwentyNine = Item(
+      title: "29m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 29 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // On the upper boundary: exactly 30m ahead — should count (inclusive).
+    let atBoundary = Item(
+      title: "30m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + window,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // Outside the window: 31m and 45m ahead — should NOT count.
+    let inThirtyOne = Item(
+      title: "31m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 31 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    let inFortyFive = Item(
+      title: "45m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 45 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // 20m ahead but soft interruption — kind filter excludes it.
+    let softInTwenty = Item(
+      title: "20m soft",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 20 * 60,
+      dueKind: .datetime,
+      interruptionKind: .soft
+    )
+    // 20m ahead but already completed — status filter excludes it.
+    let doneInTwenty = Item(
+      title: "20m done",
+      status: .done,
+      kind: .reminder,
+      dueAt: now + 20 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // Exactly at `now` — strict-future lower bound excludes it
+    // (this is the `dueOrOverdueHardCount` bucket's territory).
+    let atNow = Item(
+      title: "now",
+      status: .open,
+      kind: .reminder,
+      dueAt: now,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+
+    for item in [inTen, inTwenty, inTwentyNine, atBoundary,
+                 inThirtyOne, inFortyFive, softInTwenty, doneInTwenty, atNow] {
+      try await items.insert(item)
+    }
+
+    let count = try await items.dueSoonHardCount(now: now, soonWindow: window)
+    XCTAssertEqual(count, 4, "10m, 20m, 29m, 30m should count; the rest are filtered out by window / kind / status")
+  }
+
   // MARK: - Alerts
 
   func testAlertRoundTrip() async throws {

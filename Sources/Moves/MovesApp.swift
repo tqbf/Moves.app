@@ -124,6 +124,36 @@ struct MovesApp: App {
     return image
   }
 
+  /// Knight `Image` matched to a `DeadlineUrgency`. Pulled out of the
+  /// `MenuBarExtra` label so the three-state logic stays readable.
+  ///
+  /// - `.none`: rendering mode `.template`, `foregroundStyle(.primary)`
+  ///   so the system inks the silhouette for light/dark mode.
+  /// - `.near`: rendering mode `.original` + `foregroundStyle(.orange)`
+  ///   — the template alpha mask still acts as the silhouette, SwiftUI
+  ///   fills it with system orange.
+  /// - `.overdue`: same shape, system red.
+  ///
+  /// This matches the existing template-vs-tinted pattern the prior
+  /// implementation used for the two-state badge.
+  @ViewBuilder
+  fileprivate func knightImage(for urgency: DeadlineUrgency) -> some View {
+    switch urgency {
+    case .none:
+      Image(nsImage: Self.knightTemplate)
+        .renderingMode(.template)
+        .foregroundStyle(.primary)
+    case .near:
+      Image(nsImage: Self.knightTemplate)
+        .renderingMode(.original)
+        .foregroundStyle(.orange)
+    case .overdue:
+      Image(nsImage: Self.knightTemplate)
+        .renderingMode(.original)
+        .foregroundStyle(.red)
+    }
+  }
+
   init() {
     // SwiftPM (Swift 6.3) generates `Bundle.module` as
     //   Bundle.main.bundleURL.appendingPathComponent("<Name>.bundle")
@@ -284,14 +314,18 @@ struct MovesApp: App {
       MenuPopoverView()
         .environment(store)
     } label: {
-      // The menu-bar icon is the BLACK CHESS KNIGHT (U+265E, ♞), drawn
-      // through `Text` so the system can template it for light/dark mode.
-      // Tint flips to red when there's a due/overdue hard item so a
-      // glance at the menu bar conveys urgency without opening the
-      // popover — INITIAL-PLAN §16 ("menu-bar icon may show a simple
-      // badge"). `renderedBadgeCount` honors the Phase-6 badge-enable
-      // preference, so a user who disabled the badge gets the neutral
-      // knight even with deadlines approaching.
+      // Three-state menu-bar signal driven by `renderedDeadlineUrgency`
+      // (INITIAL-PLAN §16: "menu-bar icon may show a simple badge"):
+      //
+      //   .none    → template knight, system-tinted (light/dark aware)
+      //   .near    → orange knight (Apple HIG "warning" — system
+      //              orange #FF9500 / #FF9F0A), tint only, no chip
+      //   .overdue → red knight (Apple HIG "urgent/destructive" —
+      //              system red #FF3B30 / #FF453A) + `•N` red chip
+      //
+      // The chip is intentionally overdue-only: "near" is a glanceable
+      // warning, not a count. A user who disabled the badge preference
+      // gets `.none` regardless of DB state.
       HStack(spacing: 2) {
         // Pre-rendered template NSImage of the chess knight glyph. The
         // raw `Text("♞")` rendered too thin at menu-bar size because the
@@ -300,15 +334,18 @@ struct MovesApp: App {
         // through NSImage at 18pt with isTemplate=true lets the menu bar
         // ink it for light/dark mode while keeping the bolder look of a
         // larger-font draw.
-        Image(nsImage: Self.knightTemplate)
-          .renderingMode(store.renderedBadgeCount > 0 ? .original : .template)
-          .foregroundStyle(store.renderedBadgeCount > 0 ? Color.red : .primary)
+        //
+        // For tinted states we flip rendering mode to `.original` and
+        // override `foregroundStyle` with a hard system color — the
+        // template's alpha mask is preserved as the silhouette, and
+        // SwiftUI fills it with the chosen tint.
+        knightImage(for: store.renderedDeadlineUrgency)
           .accessibilityLabel("Moves")
-        if store.renderedBadgeCount > 0 {
+        if store.renderedDeadlineUrgency == .overdue {
           Text("\(store.renderedBadgeCount)")
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.red)
-            .accessibilityLabel("\(store.renderedBadgeCount) due or overdue")
+            .accessibilityLabel("\(store.renderedBadgeCount) overdue")
         }
       }
     }

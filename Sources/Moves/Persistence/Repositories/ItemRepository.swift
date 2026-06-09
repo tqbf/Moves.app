@@ -72,15 +72,60 @@ struct ItemRepository: Sendable {
     )
   }
 
-  /// Count of items that are due-now or overdue AND hard-interruption AND
-  /// still open/captured. Drives the menu-bar badge per INITIAL-PLAN §16.
+  /// Count of items that are due-now or recently overdue (within the last
+  /// hour) AND hard-interruption AND still open/captured. Drives the
+  /// menu-bar badge per INITIAL-PLAN §16.
+  ///
+  /// The 1-hour cap is a deliberate UX call: once a deadline is more than
+  /// an hour past, the badge stops flagging it — "if I missed the call, I
+  /// missed the call". Reconciliation still marks those alerts fired
+  /// regardless of age; only this badge query enforces the cap.
   func dueOrOverdueHardCount(now: Int64) async throws -> Int {
+    let oneHourAgo = now - 3600
     let count: Int? = try await db.queryOne(
       """
       SELECT COUNT(*) FROM items
       WHERE due_at IS NOT NULL
         AND interruption_kind = ?
         AND status IN (?, ?)
+        AND due_at <= ?
+        AND due_at >= ?;
+      """,
+      bind: { stmt in
+        stmt.bindText(InterruptionKind.hard.rawValue, at: 1)
+        stmt.bindText(ItemStatus.captured.rawValue, at: 2)
+        stmt.bindText(ItemStatus.open.rawValue, at: 3)
+        stmt.bindInt64(now, at: 4)
+        stmt.bindInt64(oneHourAgo, at: 5)
+      },
+      row: Self.readCount
+    )
+    return count ?? 0
+  }
+
+  /// Count of items whose hard-interruption deadline is *approaching* — in
+  /// the future window `(now, now + soonWindow]`. Drives the menu-bar
+  /// "near" warning state (orange knight tint) so the user gets a
+  /// glanceable signal before a deadline passes, not only after.
+  ///
+  /// Same status / interruption-kind filter as `dueOrOverdueHardCount`
+  /// (`captured` or `open`, `interruption_kind = hard`), but the time
+  /// predicate is strict-future: `due_at > now AND due_at <= now + window`.
+  /// At-due / overdue items are owned by `dueOrOverdueHardCount` and the
+  /// `DeadlineUrgency` resolver chooses overdue when both report non-zero.
+  ///
+  /// `soonWindow` is seconds-into-the-future; default is 30 minutes, the
+  /// same threshold the AppStore uses for its `DeadlineUrgency.near`
+  /// state.
+  func dueSoonHardCount(now: Int64, soonWindow: Int64 = 30 * 60) async throws -> Int {
+    let upper = now + soonWindow
+    let count: Int? = try await db.queryOne(
+      """
+      SELECT COUNT(*) FROM items
+      WHERE due_at IS NOT NULL
+        AND interruption_kind = ?
+        AND status IN (?, ?)
+        AND due_at > ?
         AND due_at <= ?;
       """,
       bind: { stmt in
@@ -88,6 +133,7 @@ struct ItemRepository: Sendable {
         stmt.bindText(ItemStatus.captured.rawValue, at: 2)
         stmt.bindText(ItemStatus.open.rawValue, at: 3)
         stmt.bindInt64(now, at: 4)
+        stmt.bindInt64(upper, at: 5)
       },
       row: Self.readCount
     )

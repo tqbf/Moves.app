@@ -40,13 +40,16 @@ struct AlertReconciliation {
     /// schedule-worthy (e.g. interruption-kind flipped to soft and the
     /// previously-scheduled hard alert is now stale).
     var identifiersToCancel: [String]
-    /// Items that should be (re)scheduled via `ReminderScheduler.scheduleAtDue`.
-    /// `interruption_kind == .hard`, `due_at` in the future, and there is no
-    /// pending OS notification already covering them.
+    /// Items that should be (re)scheduled via
+    /// `ReminderScheduler.scheduleAlerts`. `interruption_kind == .hard`,
+    /// `due_at` in the future, and no pending OS notification already
+    /// covering them. The reconciler resolves the per-kind offsets from
+    /// preferences when applying the plan.
     var itemsToSchedule: [Item]
     /// Alert ids whose `fired_at` should be stamped to `now` because the
     /// item is hard, past due, and the alert row is still unfired. No OS
-    /// notification is delivered — that ship sailed.
+    /// notification is delivered — that ship sailed. Includes every
+    /// unfired alert row per item, not just the at-due one.
     var alertIdsToMarkFired: [String]
   }
 
@@ -58,17 +61,25 @@ struct AlertReconciliation {
   let alertRepository: AlertRepository
   let reminderScheduler: ReminderScheduler?
   let center: any UNUserNotificationCenterProtocol
+  /// Per-item offset resolver. Threaded through so the pure `plan(...)`
+  /// stays free of `UserPreferences` and the reconciler can use whatever
+  /// kind-specific defaults the store is holding. The default returns
+  /// `[0]` (at-due only) so call-sites that don't care still get the v1
+  /// behavior.
+  let offsetsForItem: @Sendable (Item) -> [Int]
 
   init(
     itemRepository: ItemRepository,
     alertRepository: AlertRepository,
     reminderScheduler: ReminderScheduler?,
-    center: any UNUserNotificationCenterProtocol
+    center: any UNUserNotificationCenterProtocol,
+    offsetsForItem: @escaping @Sendable (Item) -> [Int] = { _ in [0] }
   ) {
     self.itemRepository = itemRepository
     self.alertRepository = alertRepository
     self.reminderScheduler = reminderScheduler
     self.center = center
+    self.offsetsForItem = offsetsForItem
   }
 
   // MARK: - Pure planning
@@ -191,7 +202,11 @@ struct AlertReconciliation {
       }
       if let reminderScheduler {
         for item in plan.itemsToSchedule {
-          _ = try? await reminderScheduler.scheduleAtDue(item: item)
+          let offsets = offsetsForItem(item)
+          _ = try? await reminderScheduler.scheduleAlerts(
+            item: item,
+            offsetsMinutes: offsets
+          )
         }
       }
     } catch {

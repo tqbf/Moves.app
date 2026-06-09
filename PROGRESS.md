@@ -2,6 +2,301 @@
 
 Newest first.
 
+## 2026-06-08 — Available pane layout fix
+
+Thomas flagged "the Available pane still isn't aligned and it doesn't
+make sense how it's laid out". Two root causes:
+
+1. `AvailableView` was emitting `workingStatus` and the `List` as two
+   sibling views directly inside `PaneListShell { ... }`. `PaneListShell`
+   applies `.frame(maxHeight: .infinity, alignment: .topLeading)` to its
+   `content()` builder, which the TupleView propagates to each child —
+   both became greedy in the enclosing VStack and split available
+   vertical space. The List ended up sitting in the lower half of the
+   pane with a huge mysterious gap above it. Same fix
+   `ThreadsListView` already had: wrap the body in an inner `VStack
+   (spacing: 0) { … }` so the two children share a single greedy slot
+   with intrinsic heights.
+2. The visible-rows `Section { ForEach }` had no header but was still
+   spending an inset-list Section header gap. Dropped the wrapper so
+   the visible rows render flat (the "De-emphasized during working
+   hours" subsection keeps its own meaningful header).
+
+While in the file: moved the "Working: yes/no" pill into a
+`.safeAreaInset(edge: .bottom)` footer with `.bar` material. Reads as
+a chrome status chip (Mail's connection footer / Reminders'
+completion-summary pattern) rather than competing with the row list
+for top-of-pane attention. Typography moved to semantic `.caption` /
+`.caption2.weight(.semibold)`. Row leading inset 28 → 20 to match the
+macOS inset-list default. Copy nudged from "Working" → "Working
+hours" so the meaning is unambiguous at the footer.
+
+`make check` + `make test` green (174/174). Visual gate against
+build/Moves.app via computer-use: single-row Available pane now shows
+"Test thread" at the top of the list area and "Working hours: no"
+sitting on a thin bar at the bottom — no mystery gap.
+
+## 2026-06-08 — deadline alerts: macos-design + swiftui-pro tightening
+
+Final polish pass over the three new surfaces (chip row, capture palette
+chip slot, edit-due sheet, menubar label, popover header) using
+`swiftui-pro` + `macos-design`. Floor gate: 174/174 green (no test delta).
+
+Applied:
+
+- **`AlertOffsetChipRow`** — dropped the hardcoded `.font(.system(size: 11,
+  weight: .medium))` on chip labels. `Toggle(.button) + controlSize(.small)`
+  already resolves to the right typography on macOS; the override fought
+  the system metric and broke Dynamic Type scaling. Same fix on the
+  leading "Alert me:" label: `.font(.system(size: 11))` → `.font(.caption)`.
+- **`EditDueTimeSheet`** ("Alert me" label above the chip row) — same
+  `.system(size: 11)` → `.caption` semantic swap.
+- **`CapturePaletteView`** — the `.transition(.opacity)` on the chip row
+  was dormant (no `value:`-bound animation context). Added a derived
+  `chipRowVisible` Bool and a `.animation(.easeOut(0.18), value:
+  chipRowVisible)` on the enclosing VStack so the chip row actually fades
+  + slides in when a deadline is first recognized. Combined transition:
+  `.opacity.combined(with: .move(edge: .top))`.
+
+Skipped (cosmetic):
+
+- `Binding(get:set:)` inside the per-chip ForEach. The Set-membership
+  binding has no natural source; the synthetic binding is the simplest
+  correct version and well within budget for six chips.
+- Three-case switch in the popover header. `if let` would be shorter but
+  the `.none → EmptyView()` arm is the most readable expression.
+- Menubar overdue chip count using `.fontWeight(.medium)` instead of
+  `.bold()` — deliberate emphasis on an urgency chip, not a generic
+  semibold sprinkle.
+
+Visual gate (computer-use, build/Moves.app):
+
+1. Capture palette: typed "finish proposal by friday 5pm" — chip row
+   appears beneath the deadline preview with At due / 1h / Morning of
+   pre-selected (the `.task` `[1440, 60, 0]` defaults). Toggled 30m on,
+   pressed Return — save was instant, palette dismissed.
+2. Forced a hard captured item to `now + 20m`, relaunched. Popover
+   header showed **"•1 soon"** in orange.
+3. Moved the same item to `now - 10m`, relaunched. Menubar knight
+   tinted with a red "1" chip; popover header showed **"•1 overdue"**
+   in red.
+4. Edit due time sheet (right-click → Edit due time…) showed the same
+   six chips with At due / 30m / 1h / Morning of filled — matches the
+   override saved at step 1 + the 30m toggle.
+
+## 2026-06-08 — Deadline alerts: three-state menubar urgency (near / overdue)
+
+Before this pass the menubar knight was binary: either red-tinted with
+a `•N` chip (overdue, capped to the 1-hour window the prior subagent
+landed) or template-neutral (no deadlines, or none within an hour).
+"NEAR but not yet passed" looked identical to "no deadlines at all".
+The user asked for a visible warning state so an approaching
+deadline pre-empts the cliff.
+
+Backend:
+
+- `Sources/Moves/Persistence/Repositories/ItemRepository.swift`:
+  new `dueSoonHardCount(now:soonWindow:)`, default 30-minute window.
+  Same status (`captured`/`open`) + `interruption_kind = hard`
+  predicate as `dueOrOverdueHardCount`, but the time range flips to
+  strict-future `(now, now + soonWindow]`. Inclusive upper bound,
+  exclusive lower bound — `now` itself belongs to the
+  `dueOrOverdueHardCount` bucket.
+- `Sources/Moves/Domain/DeadlineUrgency.swift`: new
+  `enum DeadlineUrgency { case none, near, overdue }`. The
+  enum's doc comment carries the system-color policy (HIG red
+  `#FF3B30` for urgent/destructive, system orange `#FF9500` for
+  warning — confirmed against the macos-design skill's
+  `visual-design.md`).
+- `Sources/Moves/Model/AppStore.swift`:
+  - New `private(set) var dueSoonHardCount: Int = 0`.
+  - `refreshDueCount()` now fans out to both repo queries via
+    `async let` and awaits in sequence. Same call-sites as before.
+  - New computed `var renderedDeadlineUrgency: DeadlineUrgency`.
+    `.overdue` if `dueOrOverdueHardCount > 0`, else `.near` if
+    `dueSoonHardCount > 0`, else `.none`. Gated on the
+    `preferences.badgeEnabled` toggle, so a user who disabled the
+    badge gets `.none` regardless of DB state — matches
+    `renderedBadgeCount`'s policy.
+
+Menubar UI (`Sources/Moves/MovesApp.swift`):
+
+- New `knightImage(for:)` helper builds the knight `Image` per
+  `DeadlineUrgency` case. Neutral: `.template` rendering mode +
+  `foregroundStyle(.primary)` (system light/dark tinting). Near:
+  `.original` + `.orange`. Overdue: `.original` + `.red`.
+- The `•N` count chip is overdue-only. Near is tint-only — a
+  glanceable warning, not a precise count, per the user's framing.
+
+Popover header (`Sources/Moves/Views/Popover/MenuPopoverView.swift`):
+
+- The `•N due` orange chip became a three-state switch over
+  `renderedDeadlineUrgency`. Overdue → "•N overdue" in red,
+  near → "•N soon" in orange, none → no chip. Matches the menubar
+  tint.
+
+Tests added (1 net):
+
+- `PersistenceRoundTripTests.testDueSoonHardCountWindowBoundaries`
+  — fixtures at 10/20/29/30 (boundary)/31/45 minutes ahead plus
+  soft + done filters; expects 4 (10, 20, 29, 30) and verifies
+  status / interruption-kind / exact-now exclusion.
+
+174 tests, all passing (was 173).
+
+Visual gate via computer-use against `build/Moves.app`:
+
+1. Inserted a hard `captured` item due in 20 minutes via sqlite3.
+   Launched Moves. Menubar knight tinted **orange**, no chip.
+   Popover header showed **"•1 soon"** in orange.
+2. Updated the same item's `due_at` to 10 minutes in the past,
+   relaunched. Menubar knight tinted **red** with a red **"1"**
+   chip. Popover header showed **"•1 overdue"** in red.
+3. Step 3 (60-minute drop-off) was not exercised at runtime — the
+   1-hour cap is already covered by
+   `testDueOrOverdueHardCountCapsAtOneHour` from the prior backend
+   pass and doesn't ride on this change.
+
+## 2026-06-08 — Deadline alerts: per-item offset chips in capture + edit-due (UI)
+
+Surfaces the multi-offset backend that landed in 8a707b7. Until now the
+per-kind defaults in `preferences.reminderOffsetsMinutes` /
+`deadlineTaskOffsetsMinutes` were applied silently; the user had no way
+to bias an individual deadline-bearing item. They asked for it
+explicitly.
+
+What changed:
+
+- New `Sources/Moves/Views/Shared/AlertOffsetChipRow.swift`. Canonical
+  chip set `[0, 15, 30, 60, 120, 24*60]` rendered as a row of
+  `Toggle(isOn:)` `.toggleStyle(.button)` `.controlSize(.small)` —
+  selected → filled accent button, unselected → bordered grey
+  button. This is the native macOS multi-select chip idiom (Mail's
+  toolbar filters, System Settings "Filter by" pills use the same
+  shape). Short copy on chips: "At due", "15m", "30m", "1h", "2h",
+  "Morning of"; the verbose `AlertOffsetLabel.describe` shape stays
+  reserved for Settings where width isn't constrained.
+- `Sources/Moves/Views/Capture/CapturePaletteView.swift`: chip row
+  appears on its own line below the deadline-preview chip whenever
+  the live parse recognized a `dueAt`. Pre-seeded from
+  `store.offsetsForCapture(kind:)` for the inferred kind; reseeds
+  when the inferred kind transitions (e.g. user types "due" and the
+  parse flips from `.capture` to `.task`), but only when it actually
+  changes — keystroke noise doesn't undo the user's chip toggles.
+  Panel widened 540→620pt to fit all six chips on one line;
+  `NSHostingController.sizingOptions = [.preferredContentSize]` so
+  the panel grows vertically when the chip row appears.
+- `Sources/Moves/Views/Window/Captured/CapturedRow.swift` (the
+  `EditDueTimeSheet`): chip row appears under the DatePicker when
+  "Has deadline" is on. Prefilled from `alertRepository.forItem(...)`
+  (the actually-scheduled offsets), falling back to kind defaults if
+  there are none. Sheet widened 340→360pt.
+- `Sources/Moves/Model/AppStore.swift`:
+  - `capture(_:now:offsetsOverride:)` — new optional parameter,
+    `nil` preserves "use kind defaults" for existing callers
+    (`OnboardingView`'s seeded capture stays unchanged).
+  - `editDueAt(_:dueAt:dueKind:offsetsOverride:)` — same shape.
+    Now also calls `alertRepository.deleteForItem(itemId:)` before
+    re-scheduling so a second edit doesn't stack on top of the
+    first; this runs unconditionally (independent of the scheduler
+    being installed) so stale rows can't survive in tests/SwiftPM
+    host either.
+  - New static `resolveOffsets(override:kindDefault:)` — central
+    policy: `nil` → kind default, `[]` → `[0]` (the user can never
+    accidentally save a deadline-bearing item with zero alerts),
+    populated array → use as-is. Sorted is the chip row's
+    responsibility on the way in; the scheduler de-dupes again
+    downstream.
+- `Sources/Moves/Persistence/Repositories/AlertRepository.swift`:
+  added `deleteForItem(itemId:)` for the cancel-and-rebuild path.
+
+Per-item override semantics vs preference defaults: `preferences.*OffsetsMinutes`
+are the *starting selection* for the chip row. The user can then
+toggle chips on or off before pressing Return / Save. The override
+short-circuits `offsetsForCapture(kind:)` only for that one item.
+Other callers (onboarding, future scripted captures, reconciliation)
+pass `nil` and continue to honor the per-kind defaults from Settings.
+
+Tests added (4 net):
+
+- `Phase4AppStoreTests.testResolveOffsetsNilUsesKindDefault`
+- `Phase4AppStoreTests.testResolveOffsetsEmptyOverrideFallsBackToAtDueOnly`
+- `Phase4AppStoreTests.testResolveOffsetsPopulatedOverrideWinsOverKindDefault`
+- `Phase4AppStoreTests.testEditDueAtDropsPriorAlertsBeforeRescheduling`
+
+173 tests, all passing (was 169 after backend pass).
+
+Visual gate: launched build/Moves.app via computer-use, opened the
+capture palette via the popover, typed "finish proposal by friday
+5pm". The chip row appeared on its own line with "At due", "1h", and
+"Morning of" pre-selected (the `.task` deadline defaults of
+`[24*60, 60, 0]`). Toggled 30m on, hit Return. Item saved into
+Captured + Deadlines. Right-click → Edit due time → sheet displayed
+the chips with At due/30m/1h/Morning of selected, matching the
+override that was just saved.
+
+## 2026-06-08 — Deadline alerts: multi-offset scheduling + 1-hour overdue cap (backend)
+
+Backend pass on the deadlines workflow. The user's report: "nothing
+happens when a deadline passes." Two root causes — only the at-due
+notification was ever scheduled (the `reminderOffsetsMinutes` /
+`deadlineTaskOffsetsMinutes` shapes on `UserPreferences` were ignored
+by the scheduler), and the menubar badge counted overdue items
+forever, making a missed call sit in the chrome until manually
+cleared.
+
+What changed:
+
+- `Sources/Moves/Services/ReminderScheduler.swift`: new
+  `scheduleAlerts(item:offsetsMinutes:)` that de-dupes / sorts
+  descending, computes `fireDate = dueAt - offset*60`, skips
+  past-fire offsets entirely (no Alert row, no OS request — the
+  reconciler/badge handle past-due state), and writes one Alert row
+  + one `moves.item.<itemId>.alert.<alertId>` request per surviving
+  offset. Body uses a terse "Due in 15m"/"Due in 1h" copy for
+  pre-due fires; at-due stays title-only. `scheduleAtDue(item:)` is
+  now a one-liner that calls the new method with `[0]`. The protocol
+  seam swapped `notificationSettings()` for
+  `currentAuthorizationStatus()` so the test fake doesn't need an
+  uninhabitable `UNNotificationSettings`.
+- `Sources/Moves/Model/AppStore.swift`:
+  `offsetsForCapture(kind:)` picks the offsets list (`.reminder` →
+  `preferences.reminderOffsetsMinutes`, `.task` →
+  `preferences.deadlineTaskOffsetsMinutes`, `.capture` → `[0]`).
+  `capture(_:)` and `editDueAt(_:dueAt:dueKind:)` now call
+  `scheduleAlerts` with that list. `reconcileAlerts(now:)` snapshots
+  both preference lists into the new `offsetsForItem` closure passed
+  to `AlertReconciliation`.
+- `Sources/Moves/Services/AlertReconciliation.swift`: same three
+  buckets, but the schedule bucket now dispatches to
+  `scheduleAlerts` via an injected
+  `offsetsForItem: @Sendable (Item) -> [Int]` closure. Pure
+  `plan(...)` stays unchanged — the multi-alert work is downstream
+  of the decision to schedule. Mark-fired already iterates per-row.
+- `Sources/Moves/Persistence/Repositories/ItemRepository.swift`:
+  `dueOrOverdueHardCount(now:)` adds `AND due_at >= now - 3600`.
+  Items more than an hour past due fall off the menubar badge.
+  `allOpenOrCapturedWithDueAt()` unchanged — reconciliation still
+  needs to see all of them.
+
+Tests added (5 net):
+
+- `PersistenceRoundTripTests.testDueOrOverdueHardCountCapsAtOneHour`
+  — 30m overdue counts, 90m overdue does not, exactly-60m overdue
+  is inside the window.
+- `AlertReconciliationTests.testReconcileSchedulesAllOffsetsAsAlertRowsForHardFutureItem`
+  — three offsets → three Alert rows + three OS requests.
+- `AlertReconciliationTests.testReconcileIsIdempotentForMultiAlertItem`
+  — covered-by-pending detection prevents double-schedule across
+  two reconcile passes.
+- `AlertReconciliationTests.testReconcileMarksAllUnfiredAlertsForPastDueItem`
+  — every unfired Alert row on a past-due hard item gets stamped.
+- `AlertReconciliationTests.testPlanSchedulesHardFutureItemWhenNoPendingExists`
+  — plan-level coverage of the new dispatch path.
+
+169 tests, all passing. No UI changes — capture-palette / edit-due
+chrome is a follow-on subagent.
+
 ## 2026-06-08 — In-app Help window
 
 The product is opinionated about its vocabulary — thread, item, capture,
