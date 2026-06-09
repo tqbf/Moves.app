@@ -147,6 +147,64 @@ final class PersistenceRoundTripTests: XCTestCase {
     XCTAssertNil(gone)
   }
 
+  /// Boundary test for the 1-hour overdue cap on the badge query: items
+  /// up to 60 minutes past due_at count, anything older does not. The
+  /// user's framing: "overdue status only matters for an hour, and then
+  /// stop flagging it."
+  func testDueOrOverdueHardCountCapsAtOneHour() async throws {
+    let db = try openDatabase()
+    let items = ItemRepository(database: db)
+
+    let now: Int64 = 1_780_493_400 // fixture: 2026-06-08 14:30 UTC
+
+    // 30 minutes overdue — should count.
+    let recent = Item(
+      title: "30m overdue",
+      status: .open,
+      kind: .reminder,
+      dueAt: now - 30 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // 90 minutes overdue — should NOT count.
+    let stale = Item(
+      title: "90m overdue",
+      status: .open,
+      kind: .reminder,
+      dueAt: now - 90 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    // Future hard item — should NOT count (existing behavior).
+    let future = Item(
+      title: "in 10m",
+      status: .open,
+      kind: .reminder,
+      dueAt: now + 10 * 60,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await items.insert(recent)
+    try await items.insert(stale)
+    try await items.insert(future)
+
+    let count = try await items.dueOrOverdueHardCount(now: now)
+    XCTAssertEqual(count, 1, "only the 30-minute-overdue item should count toward the badge")
+
+    // Boundary: exactly 60 minutes overdue is still inside the window.
+    let edge = Item(
+      title: "60m overdue",
+      status: .open,
+      kind: .reminder,
+      dueAt: now - 3600,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await items.insert(edge)
+    let withEdge = try await items.dueOrOverdueHardCount(now: now)
+    XCTAssertEqual(withEdge, 2, "60-minute-overdue boundary should count (>= now - 3600)")
+  }
+
   // MARK: - Alerts
 
   func testAlertRoundTrip() async throws {

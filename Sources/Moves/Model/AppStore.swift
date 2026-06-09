@@ -316,6 +316,23 @@ final class AppStore {
     preferences.badgeEnabled ? dueOrOverdueHardCount : 0
   }
 
+  /// Resolved alert-offset list for a captured item of `kind`. Drives the
+  /// multi-alert schedule on capture / due-edit, and the reconciler's
+  /// "schedule missing" bucket. Centralized here so the scheduler stays
+  /// pure and the policy lives next to `preferences`.
+  ///
+  /// `.reminder` and `.task` use the per-kind defaults from preferences.
+  /// `.capture` (parsed `interruptionKind == .none`) gets `[0]` so a
+  /// deadline-bearing capture still pings at due time even though the
+  /// user didn't opt into hard-interruption alerts.
+  func offsetsForCapture(kind: ItemKind) -> [Int] {
+    switch kind {
+    case .reminder: return preferences.reminderOffsetsMinutes
+    case .task: return preferences.deadlineTaskOffsetsMinutes
+    case .capture: return [0]
+    }
+  }
+
   // MARK: - Export (Phase 6)
 
   /// Construct an `ExportService` against the live database + repositories.
@@ -339,11 +356,22 @@ final class AppStore {
   /// (tests / SwiftPM xctest host).
   func reconcileAlerts(now: Date = Date()) async {
     guard let reminderScheduler else { return }
+    // Snapshot the offset policy at call time so the reconciler closure
+    // doesn't need to retain `self`.
+    let reminderOffsets = preferences.reminderOffsetsMinutes
+    let deadlineOffsets = preferences.deadlineTaskOffsetsMinutes
     let reconciler = AlertReconciliation(
       itemRepository: itemRepository,
       alertRepository: alertRepository,
       reminderScheduler: reminderScheduler,
-      center: UNUserNotificationCenter.current()
+      center: UNUserNotificationCenter.current(),
+      offsetsForItem: { item in
+        switch item.kind {
+        case .reminder: return reminderOffsets
+        case .task: return deadlineOffsets
+        case .capture: return [0]
+        }
+      }
     )
     await reconciler.reconcile(now: now)
     await refreshDueCount()
@@ -392,11 +420,12 @@ final class AppStore {
       return nil
     }
 
-    // Schedule the at-due notification if applicable. The scheduler handles
-    // the authorization-on-first-capture flow.
+    // Schedule the per-kind offsets if there's a deadline. The scheduler
+    // handles the authorization-on-first-capture flow.
     if parsed.dueAt != nil, let reminderScheduler {
+      let offsets = offsetsForCapture(kind: itemKind)
       do {
-        _ = try await reminderScheduler.scheduleAtDue(item: item)
+        _ = try await reminderScheduler.scheduleAlerts(item: item, offsetsMinutes: offsets)
         notificationsDenied = reminderScheduler.authorizationStatus == .denied
       } catch {
         loadError = "Notification schedule failed: \(error)"
@@ -804,7 +833,11 @@ final class AppStore {
       if let reminderScheduler {
         await reminderScheduler.cancelPending(itemId: copy.id)
         if copy.dueAt != nil, copy.interruptionKind == .hard {
-          _ = try? await reminderScheduler.scheduleAtDue(item: copy)
+          let offsets = offsetsForCapture(kind: copy.kind)
+          _ = try? await reminderScheduler.scheduleAlerts(
+            item: copy,
+            offsetsMinutes: offsets
+          )
         }
       }
       await reloadCaptured()

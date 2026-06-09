@@ -2,6 +2,68 @@
 
 Newest first.
 
+## 2026-06-08 — Deadline alerts: multi-offset scheduling + 1-hour overdue cap (backend)
+
+Backend pass on the deadlines workflow. The user's report: "nothing
+happens when a deadline passes." Two root causes — only the at-due
+notification was ever scheduled (the `reminderOffsetsMinutes` /
+`deadlineTaskOffsetsMinutes` shapes on `UserPreferences` were ignored
+by the scheduler), and the menubar badge counted overdue items
+forever, making a missed call sit in the chrome until manually
+cleared.
+
+What changed:
+
+- `Sources/Moves/Services/ReminderScheduler.swift`: new
+  `scheduleAlerts(item:offsetsMinutes:)` that de-dupes / sorts
+  descending, computes `fireDate = dueAt - offset*60`, skips
+  past-fire offsets entirely (no Alert row, no OS request — the
+  reconciler/badge handle past-due state), and writes one Alert row
+  + one `moves.item.<itemId>.alert.<alertId>` request per surviving
+  offset. Body uses a terse "Due in 15m"/"Due in 1h" copy for
+  pre-due fires; at-due stays title-only. `scheduleAtDue(item:)` is
+  now a one-liner that calls the new method with `[0]`. The protocol
+  seam swapped `notificationSettings()` for
+  `currentAuthorizationStatus()` so the test fake doesn't need an
+  uninhabitable `UNNotificationSettings`.
+- `Sources/Moves/Model/AppStore.swift`:
+  `offsetsForCapture(kind:)` picks the offsets list (`.reminder` →
+  `preferences.reminderOffsetsMinutes`, `.task` →
+  `preferences.deadlineTaskOffsetsMinutes`, `.capture` → `[0]`).
+  `capture(_:)` and `editDueAt(_:dueAt:dueKind:)` now call
+  `scheduleAlerts` with that list. `reconcileAlerts(now:)` snapshots
+  both preference lists into the new `offsetsForItem` closure passed
+  to `AlertReconciliation`.
+- `Sources/Moves/Services/AlertReconciliation.swift`: same three
+  buckets, but the schedule bucket now dispatches to
+  `scheduleAlerts` via an injected
+  `offsetsForItem: @Sendable (Item) -> [Int]` closure. Pure
+  `plan(...)` stays unchanged — the multi-alert work is downstream
+  of the decision to schedule. Mark-fired already iterates per-row.
+- `Sources/Moves/Persistence/Repositories/ItemRepository.swift`:
+  `dueOrOverdueHardCount(now:)` adds `AND due_at >= now - 3600`.
+  Items more than an hour past due fall off the menubar badge.
+  `allOpenOrCapturedWithDueAt()` unchanged — reconciliation still
+  needs to see all of them.
+
+Tests added (5 net):
+
+- `PersistenceRoundTripTests.testDueOrOverdueHardCountCapsAtOneHour`
+  — 30m overdue counts, 90m overdue does not, exactly-60m overdue
+  is inside the window.
+- `AlertReconciliationTests.testReconcileSchedulesAllOffsetsAsAlertRowsForHardFutureItem`
+  — three offsets → three Alert rows + three OS requests.
+- `AlertReconciliationTests.testReconcileIsIdempotentForMultiAlertItem`
+  — covered-by-pending detection prevents double-schedule across
+  two reconcile passes.
+- `AlertReconciliationTests.testReconcileMarksAllUnfiredAlertsForPastDueItem`
+  — every unfired Alert row on a past-due hard item gets stamped.
+- `AlertReconciliationTests.testPlanSchedulesHardFutureItemWhenNoPendingExists`
+  — plan-level coverage of the new dispatch path.
+
+169 tests, all passing. No UI changes — capture-palette / edit-due
+chrome is a follow-on subagent.
+
 ## 2026-06-08 — In-app Help window
 
 The product is opinionated about its vocabulary — thread, item, capture,

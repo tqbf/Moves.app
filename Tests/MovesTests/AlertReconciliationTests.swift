@@ -326,6 +326,138 @@ final class AlertReconciliationTests: XCTestCase {
     XCTAssertEqual(env.center.removedIdentifiers.count, 1)
   }
 
+  // MARK: - Multi-alert end-to-end
+
+  func testPlanSchedulesHardFutureItemWhenNoPendingExists() {
+    // Multi-alert end-to-end shape: the `plan` step decides the item
+    // needs scheduling. The actual offset fan-out happens inside the
+    // scheduler, which `reconcile()` invokes via `scheduleAlerts(item:
+    // offsetsMinutes:)`. We can't drive the real scheduler through the
+    // test fake (UNNotificationSettings has no public init), so this
+    // covers the plan/dispatch contract — and the per-offset behavior
+    // is exercised through `Sources/Moves/Services/ReminderScheduler`'s
+    // direct API in the multi-offset persistence test below.
+    let item = makeItem(
+      id: "item-multi",
+      status: .open,
+      dueSeconds: secondsAhead(2 * 3600),
+      interruption: .hard
+    )
+    let plan = AlertReconciliation.plan(
+      now: now,
+      items: [item],
+      pendingAlertsByItem: [:],
+      pendingIdentifiers: []
+    )
+    XCTAssertEqual(plan.itemsToSchedule.map(\.id), ["item-multi"])
+  }
+
+  func testReconcileSchedulesAllOffsetsAsAlertRowsForHardFutureItem() async throws {
+    let env = try await Environment.make()
+    defer { env.tearDown() }
+
+    // Future hard item with no pending notification. After reconcile,
+    // the per-offset Alert rows should exist (one per future offset).
+    // The scheduler uses real `Date()` for the past-fire skip — anchor
+    // the item's due_at to a wall-clock-future moment so all three
+    // offsets remain in the future.
+    let dueAt = Int64(Date().timeIntervalSince1970) + 24 * 3600
+    let item = Item(
+      title: "submit calc homework",
+      status: .open,
+      kind: .reminder,
+      dueAt: dueAt,
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await env.itemRepo.insert(item)
+
+    // Drive `scheduleAlerts` through the fake center directly. The fake
+    // returns `.authorized` from `currentAuthorizationStatus()` so the
+    // scheduler proceeds to add OS requests.
+    env.center.authorizationStatus = .authorized
+    let scheduler = ReminderScheduler(
+      center: env.center,
+      alertRepository: env.alertRepo
+    )
+    _ = try await scheduler.scheduleAlerts(item: item, offsetsMinutes: [60, 15, 0])
+
+    let alerts = try await env.alertRepo.allForItem(item.id)
+    XCTAssertEqual(alerts.count, 3, "three offsets → three alert rows")
+    let movesRequests = env.center.pendingRequests.filter {
+      $0.identifier.hasPrefix("moves.item.\(item.id).alert.")
+    }
+    XCTAssertEqual(movesRequests.count, 3, "three offsets → three OS requests")
+  }
+
+  func testReconcileIsIdempotentForMultiAlertItem() async throws {
+    let env = try await Environment.make()
+    defer { env.tearDown() }
+
+    // Future hard item with one pending OS request already in place
+    // ("covered"). Reconcile twice; alert table shouldn't grow.
+    let item = Item(
+      title: "1:1 with Brian",
+      status: .open,
+      kind: .reminder,
+      dueAt: env.secondsAhead(3600),
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await env.itemRepo.insert(item)
+    let existing = Alert(itemId: item.id, offsetMinutes: 0)
+    try await env.alertRepo.insert(existing)
+    env.center.queuePending(["moves.item.\(item.id).alert.\(existing.id)"])
+
+    let reconciler = AlertReconciliation(
+      itemRepository: env.itemRepo,
+      alertRepository: env.alertRepo,
+      reminderScheduler: nil, // verify the "schedule" bucket is empty
+      center: env.center,
+      offsetsForItem: { _ in [60, 15, 0] }
+    )
+    await reconciler.reconcile(now: env.now)
+    await reconciler.reconcile(now: env.now)
+
+    let alerts = try await env.alertRepo.allForItem(item.id)
+    XCTAssertEqual(alerts.count, 1,
+                   "item already covered by a pending OS request; reconciler must not double-schedule")
+  }
+
+  func testReconcileMarksAllUnfiredAlertsForPastDueItem() async throws {
+    let env = try await Environment.make()
+    defer { env.tearDown() }
+
+    // Past-due hard item with three unfired alert rows (offsets persisted
+    // before the app last closed). All three should be marked fired in
+    // one reconcile pass.
+    let item = Item(
+      title: "tax filing",
+      status: .open,
+      kind: .reminder,
+      dueAt: env.secondsAgo(120),
+      dueKind: .datetime,
+      interruptionKind: .hard
+    )
+    try await env.itemRepo.insert(item)
+    for offset in [60, 15, 0] {
+      try await env.alertRepo.insert(Alert(itemId: item.id, offsetMinutes: offset))
+    }
+
+    let reconciler = AlertReconciliation(
+      itemRepository: env.itemRepo,
+      alertRepository: env.alertRepo,
+      reminderScheduler: nil,
+      center: env.center
+    )
+    await reconciler.reconcile(now: env.now)
+
+    let alerts = try await env.alertRepo.allForItem(item.id)
+    XCTAssertEqual(alerts.count, 3)
+    XCTAssertTrue(alerts.allSatisfy { $0.firedAt != nil },
+                  "every unfired row on a past-due hard item gets stamped")
+  }
+
   // MARK: - Identifier parser
 
   func testParseIdentifierRoundTrip() {
@@ -428,6 +560,9 @@ private final class FakeNotificationCenter: UNUserNotificationCenterProtocol {
   var pendingRequests: [UNNotificationRequest] = []
   /// Captured `removePendingNotificationRequests` calls, one entry per call.
   var removedIdentifiers: [[String]] = []
+  /// Mutable so the multi-offset persistence test can opt in to `.authorized`
+  /// before driving `ReminderScheduler.scheduleAlerts`.
+  var authorizationStatus: UNAuthorizationStatus = .denied
 
   func queuePending(_ ids: [String]) {
     let content = UNMutableNotificationContent()
@@ -438,20 +573,17 @@ private final class FakeNotificationCenter: UNUserNotificationCenterProtocol {
     }
   }
 
-  func notificationSettings() async -> UNNotificationSettings {
-    // AlertReconciliation never calls this directly. The unfortunate
-    // shape of UNNotificationSettings (no public init) means we can't
-    // produce a real instance — trapping is fine because no test path
-    // reaches it.
-    fatalError("FakeNotificationCenter.notificationSettings not implemented")
+  func currentAuthorizationStatus() async -> UNAuthorizationStatus {
+    authorizationStatus
   }
 
   func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
-    fatalError("FakeNotificationCenter.requestAuthorization not implemented")
+    authorizationStatus == .authorized
   }
 
   func setNotificationCategories(_ categories: Set<UNNotificationCategory>) {
-    fatalError("FakeNotificationCenter.setNotificationCategories not implemented")
+    // No-op for tests; production code only calls this from
+    // `registerCategories` at launch, which the fake never exercises.
   }
 
   func add(_ request: UNNotificationRequest) async throws {

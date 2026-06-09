@@ -72,22 +72,31 @@ struct ItemRepository: Sendable {
     )
   }
 
-  /// Count of items that are due-now or overdue AND hard-interruption AND
-  /// still open/captured. Drives the menu-bar badge per INITIAL-PLAN §16.
+  /// Count of items that are due-now or recently overdue (within the last
+  /// hour) AND hard-interruption AND still open/captured. Drives the
+  /// menu-bar badge per INITIAL-PLAN §16.
+  ///
+  /// The 1-hour cap is a deliberate UX call: once a deadline is more than
+  /// an hour past, the badge stops flagging it — "if I missed the call, I
+  /// missed the call". Reconciliation still marks those alerts fired
+  /// regardless of age; only this badge query enforces the cap.
   func dueOrOverdueHardCount(now: Int64) async throws -> Int {
+    let oneHourAgo = now - 3600
     let count: Int? = try await db.queryOne(
       """
       SELECT COUNT(*) FROM items
       WHERE due_at IS NOT NULL
         AND interruption_kind = ?
         AND status IN (?, ?)
-        AND due_at <= ?;
+        AND due_at <= ?
+        AND due_at >= ?;
       """,
       bind: { stmt in
         stmt.bindText(InterruptionKind.hard.rawValue, at: 1)
         stmt.bindText(ItemStatus.captured.rawValue, at: 2)
         stmt.bindText(ItemStatus.open.rawValue, at: 3)
         stmt.bindInt64(now, at: 4)
+        stmt.bindInt64(oneHourAgo, at: 5)
       },
       row: Self.readCount
     )
