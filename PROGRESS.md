@@ -2,6 +2,84 @@
 
 Newest first.
 
+## 2026-06-08 — Deadline alerts: per-item offset chips in capture + edit-due (UI)
+
+Surfaces the multi-offset backend that landed in 8a707b7. Until now the
+per-kind defaults in `preferences.reminderOffsetsMinutes` /
+`deadlineTaskOffsetsMinutes` were applied silently; the user had no way
+to bias an individual deadline-bearing item. They asked for it
+explicitly.
+
+What changed:
+
+- New `Sources/Moves/Views/Shared/AlertOffsetChipRow.swift`. Canonical
+  chip set `[0, 15, 30, 60, 120, 24*60]` rendered as a row of
+  `Toggle(isOn:)` `.toggleStyle(.button)` `.controlSize(.small)` —
+  selected → filled accent button, unselected → bordered grey
+  button. This is the native macOS multi-select chip idiom (Mail's
+  toolbar filters, System Settings "Filter by" pills use the same
+  shape). Short copy on chips: "At due", "15m", "30m", "1h", "2h",
+  "Morning of"; the verbose `AlertOffsetLabel.describe` shape stays
+  reserved for Settings where width isn't constrained.
+- `Sources/Moves/Views/Capture/CapturePaletteView.swift`: chip row
+  appears on its own line below the deadline-preview chip whenever
+  the live parse recognized a `dueAt`. Pre-seeded from
+  `store.offsetsForCapture(kind:)` for the inferred kind; reseeds
+  when the inferred kind transitions (e.g. user types "due" and the
+  parse flips from `.capture` to `.task`), but only when it actually
+  changes — keystroke noise doesn't undo the user's chip toggles.
+  Panel widened 540→620pt to fit all six chips on one line;
+  `NSHostingController.sizingOptions = [.preferredContentSize]` so
+  the panel grows vertically when the chip row appears.
+- `Sources/Moves/Views/Window/Captured/CapturedRow.swift` (the
+  `EditDueTimeSheet`): chip row appears under the DatePicker when
+  "Has deadline" is on. Prefilled from `alertRepository.forItem(...)`
+  (the actually-scheduled offsets), falling back to kind defaults if
+  there are none. Sheet widened 340→360pt.
+- `Sources/Moves/Model/AppStore.swift`:
+  - `capture(_:now:offsetsOverride:)` — new optional parameter,
+    `nil` preserves "use kind defaults" for existing callers
+    (`OnboardingView`'s seeded capture stays unchanged).
+  - `editDueAt(_:dueAt:dueKind:offsetsOverride:)` — same shape.
+    Now also calls `alertRepository.deleteForItem(itemId:)` before
+    re-scheduling so a second edit doesn't stack on top of the
+    first; this runs unconditionally (independent of the scheduler
+    being installed) so stale rows can't survive in tests/SwiftPM
+    host either.
+  - New static `resolveOffsets(override:kindDefault:)` — central
+    policy: `nil` → kind default, `[]` → `[0]` (the user can never
+    accidentally save a deadline-bearing item with zero alerts),
+    populated array → use as-is. Sorted is the chip row's
+    responsibility on the way in; the scheduler de-dupes again
+    downstream.
+- `Sources/Moves/Persistence/Repositories/AlertRepository.swift`:
+  added `deleteForItem(itemId:)` for the cancel-and-rebuild path.
+
+Per-item override semantics vs preference defaults: `preferences.*OffsetsMinutes`
+are the *starting selection* for the chip row. The user can then
+toggle chips on or off before pressing Return / Save. The override
+short-circuits `offsetsForCapture(kind:)` only for that one item.
+Other callers (onboarding, future scripted captures, reconciliation)
+pass `nil` and continue to honor the per-kind defaults from Settings.
+
+Tests added (4 net):
+
+- `Phase4AppStoreTests.testResolveOffsetsNilUsesKindDefault`
+- `Phase4AppStoreTests.testResolveOffsetsEmptyOverrideFallsBackToAtDueOnly`
+- `Phase4AppStoreTests.testResolveOffsetsPopulatedOverrideWinsOverKindDefault`
+- `Phase4AppStoreTests.testEditDueAtDropsPriorAlertsBeforeRescheduling`
+
+173 tests, all passing (was 169 after backend pass).
+
+Visual gate: launched build/Moves.app via computer-use, opened the
+capture palette via the popover, typed "finish proposal by friday
+5pm". The chip row appeared on its own line with "At due", "1h", and
+"Morning of" pre-selected (the `.task` deadline defaults of
+`[24*60, 60, 0]`). Toggled 30m on, hit Return. Item saved into
+Captured + Deadlines. Right-click → Edit due time → sheet displayed
+the chips with At due/30m/1h/Morning of selected, matching the
+override that was just saved.
+
 ## 2026-06-08 — Deadline alerts: multi-offset scheduling + 1-hour overdue cap (backend)
 
 Backend pass on the deadlines workflow. The user's report: "nothing

@@ -333,6 +333,16 @@ final class AppStore {
     }
   }
 
+  /// Reconcile a caller-supplied per-item offsets override with the kind
+  /// default. `nil` → use kind default. An empty array is treated as `[0]`
+  /// so the user can never accidentally save a deadline-bearing item with
+  /// zero scheduled alerts; if they deselect every chip we still ping at
+  /// due time.
+  static func resolveOffsets(override: [Int]?, kindDefault: [Int]) -> [Int] {
+    guard let override else { return kindDefault }
+    return override.isEmpty ? [0] : override
+  }
+
   // MARK: - Export (Phase 6)
 
   /// Construct an `ExportService` against the live database + repositories.
@@ -383,8 +393,19 @@ final class AppStore {
   /// `due_at`) schedule a notification. Returns the parsed projection so the
   /// caller can render the confirm line. If parsing yields an empty title,
   /// the capture is dropped and nil is returned.
+  ///
+  /// `offsetsOverride` — when non-nil, schedule exactly these offsets
+  /// (minutes-before-due) instead of consulting `offsetsForCapture(kind:)`.
+  /// An empty array is treated as `[0]` (at-due-only) so a deadline-bearing
+  /// item is never saved with zero alerts. The capture palette uses this to
+  /// surface per-item alert control; existing callers can keep passing `nil`
+  /// to preserve the "use kind defaults" behavior.
   @discardableResult
-  func capture(_ input: String, now: Date = Date()) async -> ParsedCapture? {
+  func capture(
+    _ input: String,
+    now: Date = Date(),
+    offsetsOverride: [Int]? = nil
+  ) async -> ParsedCapture? {
     let parsed = CaptureParser.parse(input, now: now)
     guard !parsed.title.isEmpty else { return nil }
 
@@ -423,7 +444,10 @@ final class AppStore {
     // Schedule the per-kind offsets if there's a deadline. The scheduler
     // handles the authorization-on-first-capture flow.
     if parsed.dueAt != nil, let reminderScheduler {
-      let offsets = offsetsForCapture(kind: itemKind)
+      let offsets = Self.resolveOffsets(
+        override: offsetsOverride,
+        kindDefault: offsetsForCapture(kind: itemKind)
+      )
       do {
         _ = try await reminderScheduler.scheduleAlerts(item: item, offsetsMinutes: offsets)
         notificationsDenied = reminderScheduler.authorizationStatus == .denied
@@ -818,7 +842,19 @@ final class AppStore {
   /// Edit the `due_at` (and matching `due_kind`) for a captured item.
   /// Passing nil clears the deadline. The notification is rescheduled (or
   /// cancelled) to match.
-  func editDueAt(_ item: Item, dueAt: Date?, dueKind: DueKind) async {
+  ///
+  /// `offsetsOverride` — when non-nil, schedule exactly these offsets
+  /// instead of the per-kind defaults (an empty array reduces to `[0]`).
+  /// Used by the edit-due sheet's chip row so the user can revise their
+  /// per-item alert plan. Before scheduling, any existing Alert rows are
+  /// dropped so a second edit doesn't stack a new schedule on top of the
+  /// old one.
+  func editDueAt(
+    _ item: Item,
+    dueAt: Date?,
+    dueKind: DueKind,
+    offsetsOverride: [Int]? = nil
+  ) async {
     var copy = item
     if let dueAt {
       copy.dueAt = Int64(dueAt.timeIntervalSince1970)
@@ -830,10 +866,18 @@ final class AppStore {
     copy.updatedAt = Int64(Date().timeIntervalSince1970)
     do {
       try await itemRepository.update(copy)
+      // Drop any persisted alert rows from the prior schedule so the new
+      // schedule replaces them cleanly. Runs unconditionally — a deadline
+      // being cleared (or just edited) makes the old rows stale either
+      // way, and the scheduler is the only thing that puts fresh ones back.
+      try await alertRepository.deleteForItem(itemId: copy.id)
       if let reminderScheduler {
         await reminderScheduler.cancelPending(itemId: copy.id)
         if copy.dueAt != nil, copy.interruptionKind == .hard {
-          let offsets = offsetsForCapture(kind: copy.kind)
+          let offsets = Self.resolveOffsets(
+            override: offsetsOverride,
+            kindDefault: offsetsForCapture(kind: copy.kind)
+          )
           _ = try? await reminderScheduler.scheduleAlerts(
             item: copy,
             offsetsMinutes: offsets

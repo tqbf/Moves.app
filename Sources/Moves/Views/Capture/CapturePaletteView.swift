@@ -16,6 +16,17 @@ struct CapturePaletteView: View {
 
   @State private var draft: String = ""
   @State private var lastSaved: ParsedCapture?
+  /// User's current per-item alert-offset selection. Seeded from
+  /// `AppStore.offsetsForCapture(kind:)` the first time the live parse
+  /// recognizes a deadline; the user can then toggle chips before Return.
+  /// Cleared when the deadline disappears so a subsequent re-recognition
+  /// re-seeds from the (possibly-different) inferred kind.
+  @State private var alertSelection: Set<Int> = []
+  /// Sentinel so we re-seed `alertSelection` only when the deadline state
+  /// transitions from "no deadline parsed" → "deadline parsed", or when the
+  /// inferred kind changes (e.g. user types "due" mid-edit and flips the
+  /// item from .capture to .task defaults).
+  @State private var lastSeededKind: ItemKind?
   @FocusState private var fieldFocused: Bool
 
   var body: some View {
@@ -55,14 +66,26 @@ struct CapturePaletteView: View {
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+
+      // Per-item alert-offset chips. Only visible when the live parse
+      // recognized a deadline AND we're not on the brief post-save dwell.
+      // The chip row owns its own line under the deadline preview so the
+      // palette stays tight when no deadline is parsed.
+      if lastSaved == nil, let parsed = currentParse, parsed.dueAt != nil {
+        AlertOffsetChipRow(selection: $alertSelection)
+          .transition(.opacity)
+      }
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 16)
-    .frame(width: 540)
+    .frame(width: 620)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .onChange(of: draft) { _, _ in seedAlertSelectionIfNeeded() }
     .onAppear {
       draft = ""
       lastSaved = nil
+      alertSelection = []
+      lastSeededKind = nil
       // Defer first-responder assignment one runloop tick: when the host
       // NSPanel finishes becoming key, @FocusState resolves correctly.
       // Setting fieldFocused = true synchronously in onAppear races the
@@ -78,13 +101,60 @@ struct CapturePaletteView: View {
     }
   }
 
+  // MARK: - Live parse
+
+  /// Cheap re-parse of the current draft used by both the preview row and
+  /// the chip-row visibility check. `CaptureParser.parse` is pure / fast;
+  /// re-computing per body invocation is simpler than caching.
+  private var currentParse: ParsedCapture? {
+    let trimmed = draft.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else { return nil }
+    return CaptureParser.parse(draft, now: Date())
+  }
+
+  /// Mirror of `AppStore.capture`'s parsed-kind → ItemKind mapping so the
+  /// chip row seeds from the matching `offsetsForCapture(kind:)`.
+  private func inferredKind(for parsed: ParsedCapture) -> ItemKind {
+    switch parsed.interruptionKind {
+    case .hard: return .reminder
+    case .soft: return .task
+    case .none: return .capture
+    }
+  }
+
+  /// Seed (or re-seed) `alertSelection` from the kind defaults when the
+  /// parse transitions into "deadline recognized" or when the inferred
+  /// kind changes. We deliberately do NOT overwrite the user's selection
+  /// while the inferred kind stays the same — once they've toggled chips,
+  /// keystroke noise on the title shouldn't undo their choices.
+  private func seedAlertSelectionIfNeeded() {
+    guard let parsed = currentParse, parsed.dueAt != nil else {
+      // Deadline gone → reset so a fresh recognition re-seeds.
+      alertSelection = []
+      lastSeededKind = nil
+      return
+    }
+    let kind = inferredKind(for: parsed)
+    if lastSeededKind != kind {
+      alertSelection = Set(store.offsetsForCapture(kind: kind))
+      lastSeededKind = kind
+    }
+  }
+
   // MARK: - Actions
 
   private func save() {
     let input = draft
     guard !input.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+    // Snapshot the chip selection at submit time. `nil` when there's no
+    // parsed deadline so the kind defaults still apply (the chip row was
+    // hidden — the user never expressed an opinion either way).
+    let parseAtSubmit = CaptureParser.parse(input, now: Date())
+    let offsetsOverride: [Int]? = (parseAtSubmit.dueAt != nil)
+      ? alertSelection.sorted()
+      : nil
     Task {
-      if let parsed = await store.capture(input) {
+      if let parsed = await store.capture(input, offsetsOverride: offsetsOverride) {
         lastSaved = parsed
         draft = ""
         // Brief dwell so the user sees the confirm, then dismiss.
@@ -208,10 +278,16 @@ final class CapturePaletteController {
     guard let store else { return }
     let panel = window ?? makeWindow(store: store)
     self.window = panel
-    panel.contentViewController = NSHostingController(
+    let hosting = NSHostingController(
       rootView: CapturePaletteView(onDismiss: { [weak self] in self?.close() })
         .environment(store)
     )
+    // Let the hosting controller drive the panel's content size from the
+    // SwiftUI layout. Without this, the panel keeps the contentRect height
+    // set at init (100pt) and the chip row that appears below the deadline
+    // preview gets clipped out of view.
+    hosting.sizingOptions = [.preferredContentSize]
+    panel.contentViewController = hosting
     panel.center()
     NSApp.activate(ignoringOtherApps: true)
     panel.makeKeyAndOrderFront(nil)
@@ -230,9 +306,13 @@ final class CapturePaletteController {
       rootView: CapturePaletteView(onDismiss: { [weak self] in self?.close() })
         .environment(store)
     )
+    // The chip row that appears below the deadline preview pushes the
+    // intrinsic content size; give the hosting controller leave to
+    // re-broadcast it so the panel resizes.
+    hosting.sizingOptions = [.preferredContentSize]
 
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 540, height: 100),
+      contentRect: NSRect(x: 0, y: 0, width: 620, height: 100),
       styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
       backing: .buffered,
       defer: false

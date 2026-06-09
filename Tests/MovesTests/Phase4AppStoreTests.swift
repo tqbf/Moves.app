@@ -192,4 +192,50 @@ final class Phase4AppStoreTests: XCTestCase {
     XCTAssertNil(cleared?.dueAt)
     XCTAssertEqual(cleared?.dueKind, DueKind.none)
   }
+
+  // MARK: - resolveOffsets
+
+  func testResolveOffsetsNilUsesKindDefault() {
+    XCTAssertEqual(
+      AppStore.resolveOffsets(override: nil, kindDefault: [60, 0]),
+      [60, 0]
+    )
+  }
+
+  func testResolveOffsetsEmptyOverrideFallsBackToAtDueOnly() {
+    // Phrased differently: the user deselects every chip. We don't fight
+    // them; we just don't let them save a deadline-bearing item with zero
+    // scheduled alerts.
+    XCTAssertEqual(
+      AppStore.resolveOffsets(override: [], kindDefault: [24 * 60, 60, 0]),
+      [0]
+    )
+  }
+
+  func testResolveOffsetsPopulatedOverrideWinsOverKindDefault() {
+    XCTAssertEqual(
+      AppStore.resolveOffsets(override: [30, 15], kindDefault: [60, 0]),
+      [30, 15]
+    )
+  }
+
+  // MARK: - editDueAt drops prior alert rows
+
+  func testEditDueAtDropsPriorAlertsBeforeRescheduling() async throws {
+    let item = try await insertCapturedItem(title: "kickoff the deck")
+    // Pre-seed two stale Alert rows that a prior schedule would have left
+    // behind. editDueAt must wipe them — even though `enableNotifications`
+    // is false (so no fresh ones are written), the deletion path runs.
+    try await store.alertRepository.insert(Alert(itemId: item.id, offsetMinutes: 60))
+    try await store.alertRepository.insert(Alert(itemId: item.id, offsetMinutes: 0))
+
+    let due = Date(timeIntervalSince1970: 1_800_000_000)
+    await store.editDueAt(item, dueAt: due, dueKind: .datetime, offsetsOverride: [15])
+
+    let remaining = try await store.alertRepository.allForItem(item.id)
+    XCTAssertTrue(
+      remaining.isEmpty,
+      "stale alerts must be cleared before re-scheduling; got \(remaining.count)"
+    )
+  }
 }

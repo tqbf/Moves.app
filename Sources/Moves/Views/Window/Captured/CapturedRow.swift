@@ -213,6 +213,13 @@ private struct EditDueTimeSheet: View {
   @State private var hasDeadline: Bool = false
   @State private var dueDate: Date = Date()
   @State private var includeTime: Bool = true
+  /// The user's revised alert-offset selection. Prefilled from the
+  /// existing Alert rows on appear (or kind defaults if there are none),
+  /// then handed back to `editDueAt(offsetsOverride:)` on save.
+  @State private var alertSelection: Set<Int> = []
+  /// Tracks an in-flight prefill of `alertSelection` so the sheet doesn't
+  /// race the user (`task` modifier runs once on appear).
+  @State private var alertsPrefilled = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -238,6 +245,16 @@ private struct EditDueTimeSheet: View {
           displayedComponents: includeTime ? [.date, .hourAndMinute] : [.date]
         )
         .datePickerStyle(.compact)
+
+        // Per-item alert plan. Same chip idiom as the capture palette so
+        // the user has one mental model for "how far ahead do I want to
+        // be pinged" regardless of where they're editing it.
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Alert me")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+          AlertOffsetChipRow(selection: $alertSelection, leadingLabel: nil)
+        }
       }
 
       HStack {
@@ -250,8 +267,9 @@ private struct EditDueTimeSheet: View {
       }
     }
     .padding(20)
-    .frame(width: 340)
+    .frame(width: 360)
     .onAppear(perform: prefill)
+    .task { await prefillAlerts() }
   }
 
   private func prefill() {
@@ -266,11 +284,37 @@ private struct EditDueTimeSheet: View {
     }
   }
 
+  /// Seed the chip selection from the persisted Alert rows. If there are
+  /// none (item never had a deadline / alerts were dropped), fall back to
+  /// the kind defaults so the user sees a sensible starting selection.
+  private func prefillAlerts() async {
+    guard !alertsPrefilled else { return }
+    alertsPrefilled = true
+    do {
+      let existing = try await store.alertRepository.forItem(item.id)
+      if existing.isEmpty {
+        alertSelection = Set(store.offsetsForCapture(kind: item.kind))
+      } else {
+        alertSelection = Set(existing.map(\.offsetMinutes))
+      }
+    } catch {
+      alertSelection = Set(store.offsetsForCapture(kind: item.kind))
+    }
+  }
+
   private func save() {
     let date: Date? = hasDeadline ? dueDate : nil
     let dueKind: DueKind = !hasDeadline ? .none : (includeTime ? .datetime : .date)
+    // Only pass an override when the user kept a deadline — clearing the
+    // deadline tears down all alerts, no override needed.
+    let offsetsOverride: [Int]? = hasDeadline ? alertSelection.sorted() : nil
     Task {
-      await store.editDueAt(item, dueAt: date, dueKind: dueKind)
+      await store.editDueAt(
+        item,
+        dueAt: date,
+        dueKind: dueKind,
+        offsetsOverride: offsetsOverride
+      )
       onClose()
     }
   }

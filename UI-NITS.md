@@ -284,6 +284,52 @@ discoverable, not just memorizable.
 
 ---
 
+## Per-item alert offsets are first-class UI
+
+> "when i add an item with a deadline, somewhere in the ui i need to be able
+> to say how far in advance of the deadline i should get alerted (15m, 30m,
+> 1hr, etc). multiple alerts."
+
+**Rule.** The Settings → Alerts pane stores *defaults*. Deadline-bearing
+items need a per-item override surface at the moment the deadline is set,
+not buried two windows deep in preferences. Apply this anywhere a
+preference's default is silently expanded into something the user might
+want to bias one captured item at a time.
+
+**Landed.**
+- New `AlertOffsetChipRow` (`Views/Shared/`): canonical chip set
+  `[0, 15, 30, 60, 120, 24*60]` rendered as `Toggle(isOn:)`
+  `.toggleStyle(.button)` `.controlSize(.small)`. Selected = filled
+  accent button, unselected = bordered grey button. Each chip carries
+  short copy: "At due", "15m", "30m", "1h", "2h", "Morning of".
+- **Capture palette:** chip row appears on its own line below the
+  deadline-preview chip whenever the live parse recognized a `dueAt`.
+  Leading "Alert me:" caption in `.system(size: 11)` `.secondary`.
+  Seeded from `AppStore.offsetsForCapture(kind:)` for the inferred kind;
+  reseeds when the inferred kind changes mid-typing, but only when it
+  actually changes — keystroke noise on the title doesn't wipe a
+  user's selection.
+- **Capture palette panel widened** from 540pt to 620pt to fit all six
+  chips on a single line without truncation. Hosting controller now
+  uses `sizingOptions = [.preferredContentSize]` so the panel grows
+  vertically when the chip row appears.
+- **Edit-due sheet:** chip row appears under the DatePicker when "Has
+  deadline" is on. Caption "Alert me" in 11pt secondary directly above
+  the chips (no `LabeledContent` — the chip row is wider than a typical
+  control), prefilled from the item's existing Alert rows (falls back
+  to kind defaults if no rows exist). Sheet widened from 340pt to
+  360pt for the chip row.
+- **Empty selection floor:** the user can deselect every chip, but on
+  save we treat `[]` as `[0]`. Deadline-bearing items never save with
+  zero scheduled alerts.
+
+**Generalize.** Whenever a setting is "list of values applied per item,"
+surface the choice next to the trigger (the date picker, the deadline
+preview), not in a global Settings tab. Settings holds the *default*;
+the per-item surface holds the *override*.
+
+---
+
 ## Working notes (no rule yet, but worth recording)
 
 - **PaneShell/PaneListShell are now pure layout wrappers** (no title,
