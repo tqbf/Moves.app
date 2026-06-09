@@ -2,6 +2,31 @@
 
 Newest first.
 
+## 2026-06-09 — Popover Available uses the §6 classifier
+
+Follow-up to the deemph-sticks fix. The popover's
+`AvailableSection.grouped()` was splitting rows on raw
+`thread.visibility` instead of running them through
+`WorkingHoursService.classify(...)` like the main-window Available
+pane does. The visible symptom: a `.downweightWork` thread always
+appeared in the de-emphasized section, even outside working hours.
+Subtler symptoms: `.hideWork` threads showed up during work; `.onlyWork`
+threads stuck around outside work.
+
+Now mirrors `AvailableView.filtered()` — calls
+`WorkingHoursService.filter(available:isWorkTime:hasDeadline:)` and
+reads `visible` / `deemphasized` off the returned `FilteredAvailable`.
+Same classifier, same `hasDeadline` closure as the main window, so
+the two surfaces agree on what's hidden, what's deemph'd, and what's
+visible.
+
+Tests stay at 207/207. Visual gate: seeded one `.normal` and one
+`.downweightWork` thread, opened the menubar — `.normal` thread under
+AVAILABLE, `.downweightWork` thread under "De-emphasized during
+working hours" (it's currently work-time). Toggling out of work-time
+would move the latter back to AVAILABLE; that path is covered by
+`WorkingHoursServiceTests.testClassifyDownweightWorkOffHours`.
+
 ## 2026-06-09 — "Only the first deemph sticks" — setVisibility wasn't rebuilding Available
 
 Reported by Thomas: add 5 threads, mark one "De-emphasize during work"

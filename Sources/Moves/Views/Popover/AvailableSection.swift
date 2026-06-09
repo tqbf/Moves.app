@@ -6,11 +6,12 @@ import SwiftUI
 /// re-entry point are absent — that's the §22 invariant, enforced upstream
 /// by `AppStore.rebuildAvailable()` filtering on `MoveResolver.resolve`.
 ///
-/// Sectioning (§12): Phase 3 ships `Available` + `De-emphasized` as the
-/// two render groups. Working-hours visibility (the policy that classifies
-/// rows into de-emphasized) is Phase 4 territory; for now we surface
-/// `ThreadVisibility.downweightWork` rows into the de-emphasis group so
-/// the layout exists and we don't have to rewire the section later.
+/// Sectioning (§12): two render groups, `Available` and
+/// `De-emphasized during working hours`. Classification routes through
+/// `WorkingHoursService.classify(...)` — the same §6 policy the
+/// main-window Available pane uses — so a `.downweightWork` thread
+/// only deemphs while it's actually work-time, and `.hideWork` /
+/// `.onlyWork` are respected too.
 ///
 /// Clicking a row:
 ///   - no Current → `start(_:)`
@@ -24,13 +25,13 @@ struct AvailableSection: View {
   var body: some View {
     PopoverSectionContainer(title: "Available") {
       let groups = grouped()
-      if groups.normal.isEmpty, groups.deemphasized.isEmpty {
+      if groups.visible.isEmpty, groups.deemphasized.isEmpty {
         Text("No re-entry points")
           .font(.callout)
           .foregroundStyle(.secondary)
       } else {
         VStack(alignment: .leading, spacing: 2) {
-          ForEach(groups.normal) { row in
+          ForEach(groups.visible) { row in
             AvailableRow(item: row, deemphasized: false, action: { handleClick(row) })
           }
         }
@@ -53,23 +54,20 @@ struct AvailableSection: View {
 
   // MARK: - Grouping
 
-  private struct Groups {
-    var normal: [AvailableThread]
-    var deemphasized: [AvailableThread]
-  }
-
-  private func grouped() -> Groups {
-    var normal: [AvailableThread] = []
-    var deemphasized: [AvailableThread] = []
-    for row in store.availableThreads {
-      switch row.thread.visibility {
-      case .normal, .onlyWork, .hideWork:
-        normal.append(row)
-      case .downweightWork:
-        deemphasized.append(row)
+  /// Apply the §6 working-hours classifier — same path the main-window
+  /// Available pane uses. `.downweightWork` rows land in `deemphasized`
+  /// only while it's actually work-time; outside work-time they sit in
+  /// `visible`. `.hideWork` / `.onlyWork` get dropped entirely when the
+  /// policy says so (no row, no entry — the popover is short on space
+  /// already; an empty section for a hidden row would be confusing).
+  private func grouped() -> WorkingHoursService.FilteredAvailable {
+    WorkingHoursService.filter(
+      available: store.availableThreads,
+      isWorkTime: store.isWorkTime,
+      hasDeadline: { row in
+        (store.openItemsByThread[row.thread.id] ?? []).contains { $0.dueAt != nil }
       }
-    }
-    return Groups(normal: normal, deemphasized: deemphasized)
+    )
   }
 
   // MARK: - Click handling
