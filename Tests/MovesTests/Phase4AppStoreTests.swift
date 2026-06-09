@@ -27,8 +27,8 @@ final class Phase4AppStoreTests: XCTestCase {
 
   // MARK: - Helpers
 
-  private func insertThread(title: String) async throws -> Moves.Thread {
-    let thread = Moves.Thread(title: title)
+  private func insertThread(title: String, breadcrumb: String = "") async throws -> Moves.Thread {
+    let thread = Moves.Thread(title: title, breadcrumb: breadcrumb)
     try await store.threadRepository.insert(thread)
     await store.reloadThreads()
     await store.rebuildAvailable()
@@ -90,6 +90,40 @@ final class Phase4AppStoreTests: XCTestCase {
 
     let reloaded = try await store.threadRepository.find(id: thread.id)
     XCTAssertEqual(reloaded?.visibility, .hideWork)
+  }
+
+  /// Regression: `availableThreads` caches a frozen `Thread` snapshot
+  /// inside each `AvailableThread`. The popover groups Available rows on
+  /// `row.thread.visibility`, so a `setVisibility` call that doesn't
+  /// trigger `rebuildAvailable` leaves the popover reading stale values.
+  /// Before the fix the second and third visibility edits looked like
+  /// no-ops in the menubar — only the first one "stuck" (until some
+  /// other action incidentally rebuilt).
+  func testSetVisibilityRebuildsAvailableSnapshot() async throws {
+    let t1 = try await insertThread(title: "T1", breadcrumb: "next 1")
+    let t2 = try await insertThread(title: "T2", breadcrumb: "next 2")
+    let t3 = try await insertThread(title: "T3", breadcrumb: "next 3")
+    await store.rebuildAvailable()
+
+    // Sanity: all three start as .normal in the cached snapshot.
+    XCTAssertEqual(snapshotVisibility(for: t1.id), .normal)
+    XCTAssertEqual(snapshotVisibility(for: t2.id), .normal)
+    XCTAssertEqual(snapshotVisibility(for: t3.id), .normal)
+
+    // Apply the change to all three in sequence. Each call must rebuild
+    // — without that, only the first one would be reflected.
+    for t in [t1, t2, t3] {
+      store.setVisibility(t, to: .downweightWork)
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    XCTAssertEqual(snapshotVisibility(for: t1.id), .downweightWork)
+    XCTAssertEqual(snapshotVisibility(for: t2.id), .downweightWork)
+    XCTAssertEqual(snapshotVisibility(for: t3.id), .downweightWork)
+  }
+
+  private func snapshotVisibility(for threadId: String) -> ThreadVisibility? {
+    store.availableThreads.first { $0.thread.id == threadId }?.thread.visibility
   }
 
   // MARK: - Working hours round-trip

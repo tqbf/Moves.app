@@ -756,15 +756,25 @@ final class AppStore {
     threads[idx].kind = kind
     threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
     persist(threads[idx])
+    // Same frozen-snapshot rationale as `setVisibility` — see note there.
+    Task { await rebuildAvailable() }
   }
 
   /// Set the §6 visibility policy on `thread`. Drives the de-emphasize /
   /// hide / only-during-work behavior on the Available list.
+  ///
+  /// `availableThreads` caches a frozen snapshot of each `Thread` inside
+  /// `AvailableThread`, so the popover's grouping reads the visibility
+  /// from the cache, not the live `threads[idx]`. Without rebuilding,
+  /// the second/third `setVisibility(..., to: .downweightWork)` call
+  /// looks like a no-op in the popover until some unrelated action
+  /// (start, capture, …) incidentally triggers a rebuild.
   func setVisibility(_ thread: Thread, to visibility: ThreadVisibility) {
     guard let idx = threads.firstIndex(of: thread) else { return }
     threads[idx].visibility = visibility
     threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
     persist(threads[idx])
+    Task { await rebuildAvailable() }
   }
 
   func delete(_ thread: Thread) {

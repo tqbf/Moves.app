@@ -2,6 +2,47 @@
 
 Newest first.
 
+## 2026-06-09 — "Only the first deemph sticks" — setVisibility wasn't rebuilding Available
+
+Reported by Thomas: add 5 threads, mark one "De-emphasize during work"
+— it appears in the de-emphasized section. Mark a second — no change.
+The third — no change. Only the first edit was reaching the popover.
+
+Root cause in `Sources/Moves/Model/AppStore.swift`:
+`setVisibility(_:to:)` mutated `threads[idx].visibility` and persisted
+to SQLite, but never called `rebuildAvailable()`. The Available
+popover reads `store.availableThreads`, whose `AvailableThread` rows
+embed a **frozen snapshot** of each `Thread` (visibility included).
+Without a rebuild, the cached snapshot kept the old visibility, so the
+popover's grouping looked at stale data. The "first one works" illusion
+came from unrelated actions — start, capture, item-toggle — incidentally
+firing a rebuild between the first and second edit.
+
+Same anti-pattern in `setKind(_:to:)`. Both setters now end with
+`Task { await rebuildAvailable() }`, matching `setStatus` and the
+breadcrumb/title editors that always did.
+
+New regression test:
+`Phase4AppStoreTests.testSetVisibilityRebuildsAvailableSnapshot`
+inserts three threads with breadcrumbs, calls `setVisibility(.downweightWork)`
+on each in sequence, and asserts the cached `availableThreads`
+snapshots all reflect the new value. Pre-fix would have failed for
+the second and third threads.
+
+Bonus side effect of the rebuild: the popover's `AvailableSection`
+grouping currently splits on raw `thread.visibility` (not the §6
+`WorkingHoursService.classify(...)` policy that the main window
+uses), which means a `.downweightWork` thread shows in the
+de-emphasized section *regardless of work-time*. That's pre-existing
+and unrelated to this fix — flagged here for a future pass to align
+the popover with the same classifier the main-window Available pane
+uses.
+
+Tests: 207/207 green (+1 net). Visual gate green: set Deemph A and
+Deemph B to `.downweightWork` via the thread-detail picker — both
+landed in the "De-emphasized during working hours" section; Deemph C
+stayed in the visible section.
+
 ## 2026-06-09 — Inspector affordance removed
 
 After the toggle-crash fix landed (always-mounted, width-animated
