@@ -73,9 +73,15 @@ struct CapturePaletteView: View {
       // palette stays tight when no deadline is parsed.
       if lastSaved == nil, let parsed = currentParse, parsed.dueAt != nil {
         AlertOffsetChipRow(selection: $alertSelection)
-          .transition(.opacity)
+          .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    // Pair the `.transition` above with a `value:`-bound animation so the
+    // chip row actually fades in when the parse first recognizes a
+    // deadline. Without this binding `.transition` is dormant — SwiftUI
+    // only animates state changes when the surrounding context declares
+    // an animation.
+    .animation(.easeOut(duration: 0.18), value: chipRowVisible)
     .padding(.horizontal, 20)
     .padding(.vertical, 16)
     .frame(width: 620)
@@ -110,6 +116,13 @@ struct CapturePaletteView: View {
     let trimmed = draft.trimmingCharacters(in: .whitespaces)
     guard !trimmed.isEmpty else { return nil }
     return CaptureParser.parse(draft, now: Date())
+  }
+
+  /// Whether the chip row should be on screen right now. Derived so the
+  /// `.animation(_:value:)` modifier on the enclosing VStack has a stable
+  /// `Equatable` value to watch for the `.transition` to fire.
+  private var chipRowVisible: Bool {
+    lastSaved == nil && (currentParse?.dueAt != nil)
   }
 
   /// Mirror of `AppStore.capture`'s parsed-kind → ItemKind mapping so the

@@ -9,6 +9,53 @@ and the **concrete change** that landed. Group entries by theme.
 
 ---
 
+## Don't override system control typography
+
+**Rule.** When a control wraps a `Toggle(.button)` / `Button` /
+`Menu` at `.controlSize(.small)`, the system already picks the right
+font size and weight for that control class. Slapping
+`.font(.system(size: 11, weight: .medium))` on the label fights the
+system metric, drops out of Dynamic Type scaling, and produces
+inconsistent typography across the same idiom (filter pills in Mail,
+System Settings "Filter by" pills).
+
+**Landed.**
+- `AlertOffsetChipRow` — dropped the explicit chip-label font; the
+  toggle's small-button style now resolves automatically.
+- The row's leading "Alert me:" label and the edit-due sheet's
+  "Alert me" label both moved from `.font(.system(size: 11))` to the
+  semantic `.font(.caption)`, matching the rest of the popover and
+  capture-palette hints.
+
+**Generalize.** Reach for semantic fonts (`.caption`, `.callout`,
+`.body`, `.headline`) before reaching for `.font(.system(size: …))`.
+The numeric form should only appear when there's no semantic match —
+the 22pt Spotlight-style capture input is the legitimate exception.
+
+---
+
+## Animate transitions with a `value:`-bound trigger
+
+**Rule.** `.transition(.opacity)` on a conditionally-rendered subview
+is dormant unless an enclosing modifier provides an animation context
+keyed on the same condition. Without it, the transition declaration
+is decorative — the view pops in instantly. SwiftUI animates state
+changes only when the surrounding view tree declares an animation,
+either via `withAnimation` at the mutation site or
+`.animation(_:value:)` on the container.
+
+**Landed.** Capture palette's chip row had `.transition(.opacity)`
+but no animation context. Added a derived `chipRowVisible: Bool`
+and an `.animation(.easeOut(0.18), value: chipRowVisible)` on the
+parent VStack. The chip row now fades + slides in when a deadline
+is first recognized.
+
+**Generalize.** Every `.transition(…)` needs a paired `.animation(_:
+value:)` on a container watching whatever state controls the
+view's appearance, or it's silently a no-op.
+
+---
+
 ## Don't repeat the sidebar
 
 > "Threads is wildly too prominent on the screen, it's static text that does

@@ -2,6 +2,54 @@
 
 Newest first.
 
+## 2026-06-08 — deadline alerts: macos-design + swiftui-pro tightening
+
+Final polish pass over the three new surfaces (chip row, capture palette
+chip slot, edit-due sheet, menubar label, popover header) using
+`swiftui-pro` + `macos-design`. Floor gate: 174/174 green (no test delta).
+
+Applied:
+
+- **`AlertOffsetChipRow`** — dropped the hardcoded `.font(.system(size: 11,
+  weight: .medium))` on chip labels. `Toggle(.button) + controlSize(.small)`
+  already resolves to the right typography on macOS; the override fought
+  the system metric and broke Dynamic Type scaling. Same fix on the
+  leading "Alert me:" label: `.font(.system(size: 11))` → `.font(.caption)`.
+- **`EditDueTimeSheet`** ("Alert me" label above the chip row) — same
+  `.system(size: 11)` → `.caption` semantic swap.
+- **`CapturePaletteView`** — the `.transition(.opacity)` on the chip row
+  was dormant (no `value:`-bound animation context). Added a derived
+  `chipRowVisible` Bool and a `.animation(.easeOut(0.18), value:
+  chipRowVisible)` on the enclosing VStack so the chip row actually fades
+  + slides in when a deadline is first recognized. Combined transition:
+  `.opacity.combined(with: .move(edge: .top))`.
+
+Skipped (cosmetic):
+
+- `Binding(get:set:)` inside the per-chip ForEach. The Set-membership
+  binding has no natural source; the synthetic binding is the simplest
+  correct version and well within budget for six chips.
+- Three-case switch in the popover header. `if let` would be shorter but
+  the `.none → EmptyView()` arm is the most readable expression.
+- Menubar overdue chip count using `.fontWeight(.medium)` instead of
+  `.bold()` — deliberate emphasis on an urgency chip, not a generic
+  semibold sprinkle.
+
+Visual gate (computer-use, build/Moves.app):
+
+1. Capture palette: typed "finish proposal by friday 5pm" — chip row
+   appears beneath the deadline preview with At due / 1h / Morning of
+   pre-selected (the `.task` `[1440, 60, 0]` defaults). Toggled 30m on,
+   pressed Return — save was instant, palette dismissed.
+2. Forced a hard captured item to `now + 20m`, relaunched. Popover
+   header showed **"•1 soon"** in orange.
+3. Moved the same item to `now - 10m`, relaunched. Menubar knight
+   tinted with a red "1" chip; popover header showed **"•1 overdue"**
+   in red.
+4. Edit due time sheet (right-click → Edit due time…) showed the same
+   six chips with At due / 30m / 1h / Morning of filled — matches the
+   override saved at step 1 + the 30m toggle.
+
 ## 2026-06-08 — Deadline alerts: three-state menubar urgency (near / overdue)
 
 Before this pass the menubar knight was binary: either red-tinted with

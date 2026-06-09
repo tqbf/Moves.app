@@ -251,7 +251,7 @@ private struct EditDueTimeSheet: View {
         // be pinged" regardless of where they're editing it.
         VStack(alignment: .leading, spacing: 6) {
           Text("Alert me")
-            .font(.system(size: 11))
+            .font(.caption)
             .foregroundStyle(.secondary)
           AlertOffsetChipRow(selection: $alertSelection, leadingLabel: nil)
         }

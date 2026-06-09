@@ -53,7 +53,7 @@ struct AlertOffsetChipRow: View {
     HStack(alignment: .center, spacing: 6) {
       if let leadingLabel {
         Text(leadingLabel)
-          .font(.system(size: 11))
+          .font(.caption)
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
       }
@@ -70,8 +70,13 @@ struct AlertOffsetChipRow: View {
             }
           )
         ) {
+          // No explicit font — `.toggleStyle(.button)` +
+          // `.controlSize(.small)` resolves to the system's small-control
+          // typography, which Dynamic Type scales correctly. Forcing
+          // size: 11 / weight: .medium fought both the system metric
+          // and the Mail / System Settings filter-pill idiom this row
+          // intentionally mirrors.
           Text(Self.chipLabel(for: offset))
-            .font(.system(size: 11, weight: .medium))
         }
         .toggleStyle(.button)
         .controlSize(.small)
