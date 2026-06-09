@@ -11,30 +11,13 @@ struct DeadlinesView: View {
   @Environment(AppStore.self) private var store
 
   @State private var selection: String?
-  @SceneStorage("inspector.deadlines.visible") private var inspectorVisible = false
 
   var body: some View {
     PaneListShell(
       title: "Deadlines",
       count: store.deadlineItems.count,
-      accessory: { headerAccessory },
-      content: { content },
-      inspector: {
-        InspectorColumn(isVisible: $inspectorVisible) { inspectorBody }
-      }
+      content: { content }
     )
-  }
-
-  @ViewBuilder
-  private var headerAccessory: some View {
-    Button {
-      withAnimation(.easeInOut(duration: 0.18)) { inspectorVisible.toggle() }
-    } label: {
-      Label("Toggle inspector", systemImage: "sidebar.right")
-        .labelStyle(.iconOnly)
-    }
-    .buttonStyle(.borderless)
-    .help(inspectorVisible ? "Hide inspector" : "Show inspector")
   }
 
   @ViewBuilder
@@ -79,52 +62,10 @@ struct DeadlinesView: View {
     }
   }
 
-  @ViewBuilder
-  private var inspectorBody: some View {
-    if let id = selection, let item = store.deadlineItems.first(where: { $0.id == id }) {
-      InspectorDetail(
-        title: item.title,
-        subtitle: threadTitle(for: item),
-        metadata: metadataRows(for: item)
-      ) {
-        Button("Mark done") { Task { await store.markItemDone(item) } }
-          .buttonStyle(.borderedProminent)
-      }
-    } else {
-      InspectorEmptyState(
-        title: "Nothing selected",
-        systemImage: "calendar.badge.clock",
-        message: "Pick a deadline to see its details and resolve it.",
-        actionLabel: nil,
-        action: nil
-      )
-    }
-  }
-
-  private func metadataRows(for item: Item) -> [(label: String, value: String)] {
-    var rows: [(String, String)] = []
-    if let due = item.dueAt {
-      let date = Date(timeIntervalSince1970: TimeInterval(due))
-      rows.append(("Due", Self.formatter.string(from: date)))
-      let isOverdue = TimeInterval(due) < Date().timeIntervalSince1970
-      rows.append(("State", isOverdue ? "Overdue" : "Upcoming"))
-    }
-    rows.append(("Kind", item.kind.rawValue.capitalized))
-    return rows
-  }
-
   private func threadTitle(for item: Item) -> String? {
     guard let threadId = item.threadId else { return nil }
     return store.thread(id: threadId)?.title
   }
-
-  private static let formatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateStyle = .medium
-    f.timeStyle = .short
-    f.doesRelativeDateFormatting = true
-    return f
-  }()
 }
 
 private struct DeadlineRow: View {

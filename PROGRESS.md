@@ -2,6 +2,32 @@
 
 Newest first.
 
+## 2026-06-09 — Inspector affordance removed
+
+After the toggle-crash fix landed (always-mounted, width-animated
+rail), Thomas's call: the inspector serves no purpose on these panes
+— the inline row anatomy already carries title, subtitle, deadline
+chip, and the open/start affordances via hover icons + context menu.
+A separate detail rail was dead weight that bought us a macOS 14.4
+constraint-engine crash hazard for free.
+
+Jettisoned:
+
+- `Sources/Moves/Views/Window/InspectorColumn.swift` deleted.
+- `PaneShell` / `PaneListShell` lost their `Inspector` generic + slot;
+  the `Accessory` slot stays because Time Log's week-navigator uses it.
+- Available / Captured / Threads / Deadlines lost their
+  `@SceneStorage("inspector.*.visible")` lines, the `Toggle inspector`
+  header buttons, the per-pane `inspectorBody` builders, and the
+  helpers (`metadataRows`, `formatter`) that only existed to feed the
+  inspector. Row selection state (`@State selection`) stays — a
+  future detail surface can read it.
+
+Build + tests green (206/206); visual gate green; commit follows.
+PROBLEMS.md got a 2026-06-09 entry documenting the underlying
+"insertion-with-transition crashes the constraint engine" pattern so
+this doesn't get reintroduced by accident.
+
 ## 2026-06-09 — Inspector toggle crash fix (macOS 14.4)
 
 After the earlier launch-crash patches (Spacer-in-toolbar + SettingsLink),

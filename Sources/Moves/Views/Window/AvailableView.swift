@@ -18,11 +18,9 @@ struct AvailableView: View {
   @Environment(\.openSettings) private var openSettings
   var onSelectThread: (String) -> Void
 
-  /// List selection drives the inspector contents. String = thread id.
+  /// List selection — kept so a future detail surface can read it; no
+  /// longer drives an inspector.
   @State private var selection: String?
-  /// Inspector visibility is persisted per scene so the user's choice
-  /// survives a window close/reopen but doesn't bleed across windows.
-  @SceneStorage("inspector.available.visible") private var inspectorVisible = false
 
   var body: some View {
     let filtered = filtered()
@@ -30,24 +28,8 @@ struct AvailableView: View {
     PaneListShell(
       title: "Available",
       count: total,
-      accessory: { headerAccessory },
-      content: { body(filtered: filtered) },
-      inspector: {
-        InspectorColumn(isVisible: $inspectorVisible) { inspectorBody(filtered: filtered) }
-      }
+      content: { body(filtered: filtered) }
     )
-  }
-
-  @ViewBuilder
-  private var headerAccessory: some View {
-    Button {
-      withAnimation(.easeInOut(duration: 0.18)) { inspectorVisible.toggle() }
-    } label: {
-      Label("Toggle inspector", systemImage: "sidebar.right")
-        .labelStyle(.iconOnly)
-    }
-    .buttonStyle(.borderless)
-    .help(inspectorVisible ? "Hide inspector" : "Show inspector")
   }
 
   @ViewBuilder
@@ -107,46 +89,6 @@ struct AvailableView: View {
     .safeAreaInset(edge: .bottom, spacing: 0) {
       workingStatus
     }
-  }
-
-  // MARK: - Inspector
-
-  @ViewBuilder
-  private func inspectorBody(filtered: WorkingHoursService.FilteredAvailable) -> some View {
-    let pool = filtered.visible + filtered.deemphasized
-    if let id = selection, let row = pool.first(where: { $0.thread.id == id }) {
-      InspectorDetail(
-        title: row.thread.title,
-        subtitle: row.move.text,
-        metadata: metadataRows(for: row)
-      ) {
-        Button("Open thread") { onSelectThread(row.thread.id) }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.regular)
-      }
-    } else {
-      InspectorEmptyState(
-        title: "Nothing selected",
-        systemImage: "figure.walk.motion",
-        message: "Pick a thread to see its next move and open it.",
-        actionLabel: pool.first.map { _ in "Open top thread" },
-        action: pool.first.map { first in { onSelectThread(first.thread.id) } }
-      )
-    }
-  }
-
-  private func metadataRows(for row: AvailableThread) -> [(label: String, value: String)] {
-    var rows: [(String, String)] = []
-    rows.append(("Status", row.thread.status.rawValue.capitalized))
-    if row.thread.kind != .normal {
-      rows.append(("Kind", row.thread.kind.rawValue.capitalized))
-    }
-    switch row.move.source {
-    case .breadcrumb: rows.append(("From", "Breadcrumb"))
-    case .segment: rows.append(("From", "Segment"))
-    case .openItem: rows.append(("From", "Open item"))
-    }
-    return rows
   }
 
   /// Working-hours status footer. Batch 8, item 29 — the previous

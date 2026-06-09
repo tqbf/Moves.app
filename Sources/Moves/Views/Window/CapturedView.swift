@@ -4,36 +4,18 @@ import SwiftUI
 /// "Captured" pane in the main window (INITIAL-PLAN §4.2, §13). All
 /// captured-status items — the inbox. Processing actions live on each
 /// row's context menu / overflow menu (`CapturedRow`). Swipe-left on a
-/// row reveals a destructive Delete button. Click a row to surface the
-/// item summary in the right inspector.
+/// row reveals a destructive Delete button.
 struct CapturedView: View {
   @Environment(AppStore.self) private var store
 
   @State private var selection: String?
-  @SceneStorage("inspector.captured.visible") private var inspectorVisible = false
 
   var body: some View {
     PaneListShell(
       title: "Captured",
       count: store.capturedItems.count,
-      accessory: { headerAccessory },
-      content: { content },
-      inspector: {
-        InspectorColumn(isVisible: $inspectorVisible) { inspectorBody }
-      }
+      content: { content }
     )
-  }
-
-  @ViewBuilder
-  private var headerAccessory: some View {
-    Button {
-      withAnimation(.easeInOut(duration: 0.18)) { inspectorVisible.toggle() }
-    } label: {
-      Label("Toggle inspector", systemImage: "sidebar.right")
-        .labelStyle(.iconOnly)
-    }
-    .buttonStyle(.borderless)
-    .help(inspectorVisible ? "Hide inspector" : "Show inspector")
   }
 
   @ViewBuilder
@@ -78,49 +60,6 @@ struct CapturedView: View {
       .scrollContentBackground(.hidden)
     }
   }
-
-  @ViewBuilder
-  private var inspectorBody: some View {
-    if let id = selection, let item = store.capturedItems.first(where: { $0.id == id }) {
-      InspectorDetail(
-        title: item.title,
-        subtitle: item.bodyMarkdown.isEmpty ? nil : item.bodyMarkdown,
-        metadata: metadataRows(for: item)
-      ) {
-        Button("Mark done") {
-          Task { await store.markItemDone(item) }
-        }
-        .buttonStyle(.borderedProminent)
-      }
-    } else {
-      InspectorEmptyState(
-        title: "Nothing selected",
-        systemImage: "tray",
-        message: "Pick a captured item to triage. Hit ⌥Space to capture more.",
-        actionLabel: "Open capture palette",
-        action: { CapturePaletteSingleton.shared?.show() }
-      )
-    }
-  }
-
-  private func metadataRows(for item: Item) -> [(label: String, value: String)] {
-    var rows: [(String, String)] = []
-    rows.append(("Kind", item.kind.rawValue.capitalized))
-    rows.append(("Status", item.status.rawValue.capitalized))
-    if let due = item.dueAt {
-      let date = Date(timeIntervalSince1970: TimeInterval(due))
-      rows.append(("Due", Self.formatter.string(from: date)))
-    }
-    return rows
-  }
-
-  private static let formatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateStyle = .short
-    f.timeStyle = .short
-    f.doesRelativeDateFormatting = true
-    return f
-  }()
 
   /// Display string for the global capture hotkey, read live from the
   /// KeyboardShortcuts library so a rebind via Settings is reflected in

@@ -18,19 +18,15 @@ struct ThreadsListView: View {
   /// subsequent Cmd-N (which goes false → true again) refocuses cleanly.
   @Bindable private var signals = AppSignals.shared
 
-  /// Selected row drives the inspector summary.
+  /// Row selection — kept for a possible future detail surface; no
+  /// longer drives an inspector.
   @State private var selection: String?
-  @SceneStorage("inspector.threads.visible") private var inspectorVisible = false
 
   var body: some View {
     PaneListShell(
       title: "Threads",
       count: store.threads.count,
-      accessory: { headerAccessory },
-      content: { content },
-      inspector: {
-        InspectorColumn(isVisible: $inspectorVisible) { inspectorBody }
-      }
+      content: { content }
     )
     .onChange(of: signals.requestNewThread) { _, requested in
       if requested { focusNewThreadInput() }
@@ -41,18 +37,6 @@ struct ThreadsListView: View {
       // flipped selection but left the flag set; pick it up here.
       if signals.requestNewThread { focusNewThreadInput() }
     }
-  }
-
-  @ViewBuilder
-  private var headerAccessory: some View {
-    Button {
-      withAnimation(.easeInOut(duration: 0.18)) { inspectorVisible.toggle() }
-    } label: {
-      Label("Toggle inspector", systemImage: "sidebar.right")
-        .labelStyle(.iconOnly)
-    }
-    .buttonStyle(.borderless)
-    .help(inspectorVisible ? "Hide inspector" : "Show inspector")
   }
 
   @ViewBuilder
@@ -85,31 +69,6 @@ struct ThreadsListView: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
       }
-    }
-  }
-
-  @ViewBuilder
-  private var inspectorBody: some View {
-    if let id = selection, let thread = store.thread(id: id) {
-      InspectorDetail(
-        title: thread.title,
-        subtitle: thread.breadcrumb.isEmpty ? nil : "Next: \(thread.breadcrumb)",
-        metadata: [
-          ("Status", thread.status.rawValue.capitalized),
-          ("Kind", thread.kind.rawValue.capitalized)
-        ]
-      ) {
-        Button("Open thread") { onSelectThread(thread.id) }
-          .buttonStyle(.borderedProminent)
-      }
-    } else {
-      InspectorEmptyState(
-        title: "Nothing selected",
-        systemImage: "rectangle.stack",
-        message: "Pick a thread to see its breadcrumb and open it. Cmd-N adds a new thread.",
-        actionLabel: "New thread",
-        action: { signals.requestNewThreadFlow() }
-      )
     }
   }
 

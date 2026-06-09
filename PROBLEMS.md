@@ -3,6 +3,65 @@
 Open issues, dirty workarounds, and follow-ups that aren't in a phase
 plan. Newest first.
 
+## 2026-06-09 — SwiftUI insertion-with-transition crashes constraint engine on macOS 14.4
+
+**Symptom.** App throws an `NSInternalInconsistencyException` from
+`-[NSWindow _postWindowNeedsUpdateConstraintsUnlessPostingDisabled]`
+during a layout pass. The stack shows ~12 frames of recursive
+`-[NSView _informContainerThatSubviewsNeedUpdateConstraints]` calls
+ending in SwiftUI's `OUTLINED_FUNCTION_4 + 30484` / `+ 98748`. Hit
+twice during the UI glow-up (PR #3): once on first launch, then again
+on clicking the Available pane's inspector reveal affordance.
+
+**Root cause.** The pattern
+
+```swift
+if isVisible {
+    SomeView()
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+}
+```
+
+inserts or removes the view with a transition. Because the SwiftUI
+hierarchy in a `Window` scene nested in `NavigationSplitView` is
+hosted inside an `_NSConstraintBasedLayoutHostingView` chain, the
+mid-transition insertion fires `setNeedsUpdateConstraints` from inside
+the active update-constraints pass. AppKit's "view modified during
+update" guard then throws. The same pattern works on some Macs and not
+others — the constraint engine's strictness varies by hardware and
+isn't debuggable from the SwiftUI side.
+
+Related triggers seen in the same PR:
+
+- `Spacer()` as the leading child of
+  `ToolbarItemGroup(placement: .primaryAction)` — redundant given the
+  trailing placement, and confuses the toolbar's intrinsic content
+  size computation. Removed.
+- `SettingsLink` hosted inside `safeAreaInset(edge: .bottom)` on a
+  `List` — its private NSHostingView shim has the same constraint
+  invalidation side effect. Replaced with
+  `Environment(\.openSettings)` driving a plain `Button`.
+
+**Workarounds.**
+
+- For inspector-style reveal: always-mount the view and animate
+  `.frame(width: isVisible ? W : 0).clipped()` instead of using
+  insertion + transition. Pattern lives in
+  `Sources/Moves/Views/Window/InspectorColumn.swift` (since gutted —
+  see 2026-06-09 PR #3 followup that removed the affordance entirely
+  on Thomas's call).
+- For toolbars: never lead a `ToolbarItemGroup` with `Spacer()` if the
+  placement already trails. Use `.primaryAction` or `.cancellationAction`
+  directly.
+- For programmatic Settings: `@Environment(\.openSettings)` reaches
+  the SwiftUI `Settings { }` scene without the constraint hazard.
+  Tradeoff: it can't pre-select a tab the way `SettingsLink` can.
+
+**Heads-up for future code.** Any time a view's visibility is driven
+by a Bool with a transition, look critically — the safe pattern on
+macOS 14.x is animate-a-dimension, not insert-with-motion. Same for
+`.matchedGeometryEffect`-based reveals near constraint-hosted views.
+
 ## 2026-06-08 — SwiftPM `Bundle.module` placement (workaround in `MovesApp.init`)
 
 **Symptom.** On macOS 14, the app crashes the first time the
