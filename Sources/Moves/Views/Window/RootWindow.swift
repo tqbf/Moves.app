@@ -14,10 +14,14 @@ struct RootWindow: View {
   @Environment(AppStore.self) private var store
   @Environment(\.openWindow) private var openWindow
   @State private var selection: SidebarDestination? = .available
-  /// Watch the onboarding presenter so the RootWindow can open the
-  /// onboarding window scene when the bootstrap flips the flag (or the
-  /// user clicks "Show onboarding again" in Settings).
-  @Bindable private var onboardingPresenter = OnboardingPresenter.shared
+  /// Cross-scope signal bus. Two flags matter here:
+  ///   - `presentOnboarding`: bootstrap or Settings flips it; this view
+  ///     opens the onboarding window scene on the true transition.
+  ///   - `requestNewThread`: Cmd-N flips it; this view switches the
+  ///     sidebar to `.threadsList`. `ThreadsListView` clears it once the
+  ///     input is focused — clearing here would race a not-yet-mounted
+  ///     ThreadsListView and drop the focus signal.
+  @Bindable private var signals = AppSignals.shared
 
   var body: some View {
     NavigationSplitView {
@@ -34,20 +38,46 @@ struct RootWindow: View {
           }
       }
     }
-    .navigationTitle("Moves")
+    // No navigationTitle — the window title bar is already "Moves" and
+    // every pane's PaneShell renders its own large title. Setting one
+    // here just adds a redundant secondary heading inside the detail
+    // toolbar.
+    .navigationTitle("")
     .task { await store.load() }
-    .onChange(of: onboardingPresenter.presentRequested) { _, requested in
+    .onChange(of: signals.presentOnboarding) { _, requested in
       if requested {
         openWindow(id: PopoverWindowID.onboarding.rawValue)
+      }
+    }
+    .onChange(of: signals.requestNewThread) { _, requested in
+      // Switch the sidebar so ThreadsListView mounts; the input focus
+      // (and clearing the flag) is owned by ThreadsListView itself.
+      if requested {
+        selection = .threadsList
       }
     }
     .onAppear {
       // If the bootstrap already flipped the flag before the window
       // mounted, open the onboarding scene now.
-      if onboardingPresenter.presentRequested {
+      if signals.presentOnboarding {
         openWindow(id: PopoverWindowID.onboarding.rawValue)
       }
     }
+    // Publish a "back" action to the focused-scene bus while the user is
+    // on a thread detail pane. The App-scope View → "Back to Threads"
+    // command (Cmd-[) reads this and disables itself when nil — i.e. on
+    // any other top-level destination. No generic browser-history stack:
+    // the only meaningful "back" relationship is thread detail → list.
+    .focusedSceneValue(\.backFromThread, backAction)
+  }
+
+  /// Only non-nil when a thread is currently selected; the App-scope
+  /// menu command keys off nil-ness to disable the shortcut everywhere
+  /// else (Available, Current, Captured, …) where "back" doesn't mean
+  /// anything.
+  private var backAction: BackAction? {
+    guard case .thread = selection else { return nil }
+    return BackAction { selection = .threadsList }
   }
 
   // MARK: - Sidebar

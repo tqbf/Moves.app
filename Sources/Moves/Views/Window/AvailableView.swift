@@ -17,7 +17,10 @@ struct AvailableView: View {
   var onSelectThread: (String) -> Void
 
   var body: some View {
-    PaneListShell(title: "Available", subtitle: subtitle) {
+    PaneListShell {
+      workingStatus
+        .padding(.horizontal, 28)
+        .padding(.bottom, 12)
       let filtered = filtered()
       if filtered.visible.isEmpty, filtered.deemphasized.isEmpty {
         ContentUnavailableView(
@@ -44,14 +47,40 @@ struct AvailableView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        // Align row content to the 28pt grid the Working pill above
+        // uses. .inset style adds its own internal inset; listRowInsets
+        // overrides it so the row text starts at exactly 28pt — same
+        // x as the pill caption.
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
     }
   }
 
-  private var subtitle: String {
-    store.isWorkTime
-      ? "Inside working hours. \(WorkingHours.formatMinute(store.workingHours.startMinute))–\(WorkingHours.formatMinute(store.workingHours.endMinute))."
-      : "Outside working hours."
+  /// "Working: yes/no" pill. "Yes" gets the orange urgency tint the
+  /// menubar badge and Upcoming hard-deadline icons already use; "no"
+  /// stays neutral gray. The configured hours range used to render to
+  /// the right of the pill but added clutter without value — Settings
+  /// is the right place to see/edit the window.
+  @ViewBuilder
+  private var workingStatus: some View {
+    let working = store.isWorkTime
+    let tint: Color = working ? .orange : .secondary
+    let label = working ? "yes" : "no"
+    HStack(spacing: 6) {
+      Text("Working:")
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+      Text(label)
+        .font(.system(size: 11, weight: .semibold))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .foregroundStyle(tint)
+        .background(
+          Capsule(style: .continuous)
+            .fill(tint.opacity(0.15))
+        )
+      Spacer()
+    }
   }
 
   private func filtered() -> WorkingHoursService.FilteredAvailable {
@@ -98,10 +127,14 @@ private struct AvailableRow: View {
             .lineLimit(1)
         }
         Spacer(minLength: 8)
-        Text(item.thread.kind.rawValue.capitalized)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(.tertiary)
-          .monospaced()
+        // Only surface non-default kinds — "Normal" is the implicit
+        // baseline and showing it on every row was visual noise.
+        if item.thread.kind != .normal {
+          Text(item.thread.kind.rawValue.capitalized)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .monospaced()
+        }
       }
       .padding(.vertical, 4)
       .frame(maxWidth: .infinity, alignment: .leading)

@@ -1,3 +1,4 @@
+import CoreImage
 import KeyboardShortcuts
 import SwiftUI
 import UserNotifications
@@ -18,22 +19,96 @@ extension KeyboardShortcuts.Name {
   )
 }
 
+/// Invisible helper that resizes the hosting NSWindow to a target size on
+/// its first appearance. Workaround for SwiftUI's `.defaultSize(...)`
+/// being ignored when the scene's content is a `NavigationSplitView` —
+/// SwiftUI prefers the split view's intrinsic ideal-width sum (typically
+/// ~920×600 for our layout), which makes the empty-state panes look
+/// stranded in a vast canvas. We override exactly once per launch.
+private struct WindowSizeInitializer: NSViewRepresentable {
+  let width: CGFloat
+  let height: CGFloat
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    DispatchQueue.main.async { [width, height] in
+      guard let window = view.window else { return }
+      // Only resize if the user hasn't already moved/sized the window.
+      // SwiftUI persists window frames; honoring a saved frame means
+      // we only force-resize on a truly first launch.
+      let savedKey = "NSWindow Frame \(window.frameAutosaveName)"
+      guard UserDefaults.standard.string(forKey: savedKey) == nil else { return }
+      var frame = window.frame
+      // Recenter the resized window on the same midpoint so it doesn't
+      // visibly jump to the top-left during the resize.
+      let cx = frame.midX
+      let cy = frame.midY
+      frame.size = NSSize(width: width, height: height)
+      frame.origin = NSPoint(x: cx - width / 2, y: cy - height / 2)
+      window.setFrame(frame, display: true, animate: false)
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
 @main
 struct MovesApp: App {
   @State private var store = AppStore()
   @State private var capturePalette: CapturePaletteController?
   @State private var notificationDelegate: NotificationDelegate?
+  /// Used by the Help menu command to open the in-app `HelpView` window
+  /// scene. Scene-level commands can't capture `@Environment(\.openWindow)`
+  /// directly inside the `.commands { }` closure, so we read it once at
+  /// the `App` level and pass it down via the command-group view.
+  @Environment(\.openWindow) private var openWindow
 
-  /// BLACK CHESS KNIGHT (U+265E) rendered through NSAttributedString into
-  /// a template NSImage. The system tints templates for menu-bar context
-  /// automatically (white in dark menu bars, black in light), and a
-  /// rendered-image path gets us a thicker, more legible glyph than
-  /// SwiftUI's `Text("♞").font(.system(weight: .black))` — chess piece
-  /// glyphs in San Francisco are weight-invariant.
+  /// Menu-bar knight glyph. Loads `logo.png` from Resources/, runs
+  /// CIMaskToAlpha to convert its white background to transparent (the
+  /// silhouette becomes the visible ink, everything else is alpha), and
+  /// marks the result as a template image for automatic light/dark
+  /// tinting.
+  ///
+  /// Falls back to a U+265E NSAttributedString render if the PNG can't
+  /// be loaded (e.g. running tests without Resources/) so the menu-bar
+  /// icon still draws.
   fileprivate static let knightTemplate: NSImage = {
+    makeLogoTemplate(pointSize: 18) ?? legacyKnightTemplate(pointSize: 18)
+  }()
+
+  /// Load `logo.png` from Resources/, invert it (so the silhouette
+  /// becomes the bright channel), then run CIMaskToAlpha so the new
+  /// "bright = opaque" mapping makes the silhouette opaque and the
+  /// original white background transparent. The output color isn't
+  /// relevant — `isTemplate = true` tells macOS to ignore color and
+  /// fill the alpha with the menubar tint.
+  ///
+  /// Returns `nil` if anything fails; the caller falls back to the
+  /// legacy glyph render.
+  private static func makeLogoTemplate(pointSize: CGFloat) -> NSImage? {
+    guard let url = Bundle.main.url(forResource: "logo", withExtension: "png"),
+          let raw = NSImage(contentsOf: url),
+          let cg = raw.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    else { return nil }
+    let ci = CIImage(cgImage: cg)
+    guard
+      let inverted = CIFilter(name: "CIColorInvert", parameters: [kCIInputImageKey: ci])?.outputImage,
+      let masked = CIFilter(name: "CIMaskToAlpha", parameters: [kCIInputImageKey: inverted])?.outputImage,
+      let cgMasked = CIContext().createCGImage(masked, from: masked.extent)
+    else { return nil }
+    let aspect = CGFloat(cgMasked.width) / max(CGFloat(cgMasked.height), 1)
+    let size = NSSize(width: pointSize * aspect, height: pointSize)
+    let image = NSImage(cgImage: cgMasked, size: size)
+    image.isTemplate = true
+    return image
+  }
+
+  /// Original U+265E render — kept as a fallback for when logo.png isn't
+  /// bundled (running tests, partial build, etc.).
+  private static func legacyKnightTemplate(pointSize: CGFloat) -> NSImage {
     let glyph = "\u{265E}"
-    let pt: CGFloat = 18
-    let font = NSFont.systemFont(ofSize: pt, weight: .black)
+    let font = NSFont.systemFont(ofSize: pointSize, weight: .black)
     let attrs: [NSAttributedString.Key: Any] = [
       .font: font,
       .foregroundColor: NSColor.black,
@@ -47,7 +122,7 @@ struct MovesApp: App {
     image.unlockFocus()
     image.isTemplate = true
     return image
-  }()
+  }
 
   init() {
     // SwiftPM (Swift 6.3) generates `Bundle.module` as
@@ -82,16 +157,52 @@ struct MovesApp: App {
     Window("Moves", id: PopoverWindowID.main.rawValue) {
       RootWindow()
         .environment(store)
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 720, minHeight: 460)
         .task { await bootstrap() }
+        // SwiftUI's NavigationSplitView computes its own intrinsic width
+        // by summing column ideals, which makes the window open at
+        // ~920×600 regardless of `.defaultSize`. Forcing the initial NSWindow
+        // frame from a background task is the reliable workaround until
+        // SwiftUI honors `.defaultSize` on NavigationSplitView scenes.
+        .background(WindowSizeInitializer(width: 800, height: 540))
     }
-    .defaultSize(width: 980, height: 640)
+    .defaultSize(width: 800, height: 540)
     .commands {
+      // View → "Back to Threads" (Cmd-[). The standard macOS "back"
+      // convention used by Safari, Mail, Finder, Xcode. We pull the
+      // selection-pop action off the focused-scene bus (see
+      // `BackNavigation.swift`); RootWindow publishes it only while a
+      // `.thread(_)` is selected, so the menu item auto-disables on
+      // every other top-level destination — siblings of `.threadsList`,
+      // not children.
+      CommandGroup(after: .sidebar) {
+        BackToThreadsCommand()
+      }
       CommandGroup(replacing: .newItem) {
-        Button("New Thread") { store.addThread(title: "New Thread") }
-          .keyboardShortcut("n")
+        Button("New Thread") {
+          // Cmd-N routes to the Threads pane's inline "New thread…" field
+          // rather than silently inserting an "Untitled" row. `NSApp
+          // .activate` brings the main window forward if a popover or
+          // sheet had focus; the presenter flag tells `RootWindow` to
+          // flip selection to `.threadsList` and `ThreadsListView` to
+          // focus the input on mount.
+          NSApp.activate(ignoringOtherApps: true)
+          AppSignals.shared.requestNewThreadFlow()
+        }
+        .keyboardShortcut("n")
         Button("Capture…") { capturePalette?.show() }
           .keyboardShortcut("k", modifiers: [.command, .shift])
+      }
+      // Replace the entire Help menu so "Moves Help" is the only entry,
+      // bound to the standard ⌘? shortcut. The default Help menu's
+      // search field is useful for documented apps but adds clutter for
+      // a single-page in-app help — the explicit replacement matches the
+      // pattern used by other focused macOS utilities.
+      CommandGroup(replacing: .help) {
+        Button("Moves Help") {
+          openWindow(id: PopoverWindowID.help.rawValue)
+        }
+        .keyboardShortcut("?")
       }
     }
 
@@ -140,11 +251,24 @@ struct MovesApp: App {
     .defaultPosition(.center)
 
     // Phase-6 onboarding modal. Hosts the OnboardingView and self-opens
-    // when `OnboardingPresenter.shared.presentRequested` flips to true.
+    // when `AppSignals.shared.presentOnboarding` flips to true.
     Window("Welcome to Moves", id: PopoverWindowID.onboarding.rawValue) {
       OnboardingHost()
         .environment(store)
     }
+    .windowResizability(.contentSize)
+    .defaultPosition(.center)
+
+    // In-app Help window. Hosts `HelpView` — a single vertically-scrolling
+    // teaching page covering the core vocabulary (threads, items,
+    // breadcrumbs, deadlines, working hours). Opened from Help → "Moves
+    // Help" (⌘?). Its own scene rather than a `.sheet` so the menubar
+    // popover's focus-loss dismissal doesn't kill it, and so the reader
+    // can keep it open alongside the main window.
+    Window("Moves Help", id: PopoverWindowID.help.rawValue) {
+      HelpView()
+    }
+    .defaultSize(width: 600, height: 700)
     .windowResizability(.contentSize)
     .defaultPosition(.center)
 
@@ -231,7 +355,7 @@ struct MovesApp: App {
     // popover surfaces a sheet that walks through capture-hotkey
     // registration and a first capture. Re-runnable from Settings.
     if store.preferences.onboardedVersion != UserPreferences.currentOnboardingVersion {
-      OnboardingPresenter.shared.requestPresent()
+      AppSignals.shared.requestOnboarding()
     }
   }
 }

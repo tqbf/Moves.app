@@ -75,7 +75,7 @@ struct GeneralSettingsTab: View {
           Button("Show onboarding again") {
             Task {
               await store.resetOnboarding()
-              OnboardingPresenter.shared.requestPresent()
+              AppSignals.shared.requestOnboarding()
             }
           }
         }

@@ -13,12 +13,13 @@ struct ThreadsListView: View {
 
   @State private var newTitle: String = ""
   @FocusState private var addFocused: Bool
+  /// Cmd-N from the App-scope menu flips `signals.requestNewThread`; we
+  /// focus the inline "New thread…" field and clear the flag so a
+  /// subsequent Cmd-N (which goes false → true again) refocuses cleanly.
+  @Bindable private var signals = AppSignals.shared
 
   var body: some View {
-    PaneListShell(
-      title: "Threads",
-      subtitle: "\(store.threads.count) total · \(store.activeCount) active"
-    ) {
+    PaneListShell {
       VStack(spacing: 0) {
         newRow
           .padding(.horizontal, 28)
@@ -30,7 +31,30 @@ struct ThreadsListView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        // Align row content to the 28pt grid the PaneListShell header
+        // and the new-thread card above already use.
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
+    }
+    .onChange(of: signals.requestNewThread) { _, requested in
+      if requested { focusNewThreadInput() }
+    }
+    .onAppear {
+      // Handle the case where the user fired Cmd-N before this view
+      // mounted (e.g. switching from the Available pane). RootWindow
+      // flipped selection but left the flag set; pick it up here.
+      if signals.requestNewThread { focusNewThreadInput() }
+    }
+  }
+
+  /// Defer the focus assignment one runloop tick so it doesn't race the
+  /// TextField's mount (same idiom as `CapturePaletteView.onAppear`).
+  /// Clear the signal once we've taken it so a future request can
+  /// refire `.onChange`.
+  private func focusNewThreadInput() {
+    DispatchQueue.main.async {
+      addFocused = true
+      signals.clearNewThreadRequest()
     }
   }
 
@@ -119,10 +143,14 @@ private struct ThreadRowSummary: View {
             .lineLimit(1)
         }
         Spacer(minLength: 8)
-        Text(thread.kind.rawValue.capitalized)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(.tertiary)
-          .monospaced()
+        // Only surface non-default kinds — "Normal" is the implicit
+        // baseline; rendering it on every row was visual noise.
+        if thread.kind != .normal {
+          Text(thread.kind.rawValue.capitalized)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .monospaced()
+        }
       }
       .padding(.vertical, 4)
       .frame(maxWidth: .infinity, alignment: .leading)

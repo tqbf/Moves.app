@@ -11,10 +11,7 @@ struct DeadlinesView: View {
   @Environment(AppStore.self) private var store
 
   var body: some View {
-    PaneListShell(
-      title: "Deadlines",
-      subtitle: "\(store.deadlineItems.count) deadlined item\(store.deadlineItems.count == 1 ? "" : "s")"
-    ) {
+    PaneListShell {
       if store.deadlineItems.isEmpty {
         ContentUnavailableView(
           "No deadlines",
@@ -36,6 +33,7 @@ struct DeadlinesView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
       }
     }
   }

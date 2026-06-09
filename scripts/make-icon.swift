@@ -1,7 +1,8 @@
 #!/usr/bin/env swift
 
-// Renders the macOS app icon for Moves. The glyph is U+265E (BLACK CHESS
-// KNIGHT, ♞) on a flat-white rounded-square — the modern macOS look. Runs
+// Renders the macOS app icon for Moves. Reads `logo.png` (the pixel-art
+// chess knight silhouette at the project root) and composites it on a
+// flat-white rounded-square background — the modern macOS look. Runs
 // as a one-shot script: emits a .iconset directory and prints the
 // `iconutil` command the caller should run to package it into .icns.
 //
@@ -13,11 +14,12 @@
 // project root.
 
 import AppKit
+import CoreImage
 import Foundation
 
 let outDir = "build/AppIcon.iconset"
 let icnsPath = "build/AppIcon.icns"
-let glyph = "\u{265E}" // BLACK CHESS KNIGHT — ♞
+let logoPath = "logo.png"
 
 // macOS icon spec: each logical size has a @1x and a @2x file. iconutil
 // reads filenames literally, so the table below is the source of truth.
@@ -37,6 +39,19 @@ let sizes: [(name: String, pixels: Int)] = [
 let fm = FileManager.default
 try? fm.removeItem(atPath: outDir)
 try fm.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+
+// Load logo.png once. Don't bother stripping the white background — the
+// silhouette lands directly on a white squircle, so the source-white
+// pixels blend invisibly into the squircle's fill while the black ones
+// remain visible.
+guard
+  let logoURL = URL(string: "file://" + fm.currentDirectoryPath + "/" + logoPath),
+  let rawLogo = NSImage(contentsOf: logoURL),
+  let logoCG = rawLogo.cgImage(forProposedRect: nil, context: nil, hints: nil)
+else {
+  FileHandle.standardError.write("could not load \(logoPath) (run from project root)\n".data(using: .utf8)!)
+  exit(1)
+}
 
 for (name, px) in sizes {
   let size = CGFloat(px)
@@ -69,32 +84,22 @@ for (name, px) in sizes {
   bg.lineWidth = max(1, size / 256)
   bg.stroke()
 
-  // Center the chess knight glyph. Empirically the ♞ glyph in the
-  // system font sits slightly above the baseline midpoint, so we nudge
-  // it down ~3% for visual centering. The font is .heavy so the figure
-  // reads well even at 16×16.
-  let fontSize = size * 0.66
-  let font = NSFont.systemFont(ofSize: fontSize, weight: .heavy)
-  let paragraph = NSMutableParagraphStyle()
-  paragraph.alignment = .center
-  let attrs: [NSAttributedString.Key: Any] = [
-    .font: font,
-    .foregroundColor: NSColor.black,
-    .paragraphStyle: paragraph,
-  ]
-  let attr = NSAttributedString(string: glyph, attributes: attrs)
-  let glyphSize = attr.size()
-  // Use cap-height-based vertical alignment: NSAttributedString.size()
-  // includes leading, which leaves the visible glyph slightly above
-  // center. -3% trim corrects it across the size range.
-  let originY = (size - glyphSize.height) / 2 - size * 0.03
-  let drawRect = NSRect(
-    x: (size - glyphSize.width) / 2,
-    y: originY,
-    width:  glyphSize.width,
-    height: glyphSize.height
-  )
-  attr.draw(in: drawRect)
+  // Center the silhouette inside the squircle. Logo is square-ish; size
+  // it to ~62% of the canvas so it sits comfortably with the edge
+  // padding the squircle implies. Vertical nudge of -2% accounts for
+  // the knight glyph's optical center sitting slightly above the
+  // geometric center.
+  //
+  // Use NSImage.draw rather than CGContext.draw — NSImage handles the
+  // Y-axis flip between Core Graphics and locked-focus contexts so the
+  // knight comes out right-side-up.
+  let logoNSImage = NSImage(cgImage: logoCG, size: .zero)
+  let logoExtent = size * 0.62
+  let logoOriginX = (size - logoExtent) / 2
+  let logoOriginY = (size - logoExtent) / 2 - size * 0.02
+  let logoRect = NSRect(x: logoOriginX, y: logoOriginY,
+                        width: logoExtent, height: logoExtent)
+  logoNSImage.draw(in: logoRect)
 
   image.unlockFocus()
 

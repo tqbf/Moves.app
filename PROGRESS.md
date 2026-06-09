@@ -2,6 +2,31 @@
 
 Newest first.
 
+## 2026-06-08 — In-app Help window
+
+The product is opinionated about its vocabulary — thread, item, capture,
+breadcrumb, deadline, parking, working hours — but none of that vocab
+surfaces in the app itself. Added a `HelpView` that teaches the model in
+one vertical scroll.
+
+- New file `Sources/Moves/Views/Help/HelpView.swift`: nine sections (What
+  is Moves?, Threads, Items: captures/tasks/reminders, The capture hotkey,
+  Current vs Available, Breadcrumbs, Deadlines, Working hours, What Moves
+  is NOT). Constrained to ~560pt reading measure; ~24pt section rhythm;
+  `.title` page header, `.title3` semibold section heads, `.body`
+  paragraphs, `.callout` `.secondary` asides. `**bold**` rendered inline
+  via `LocalizedStringKey`.
+- New `PopoverWindowID.help` case for the window-scene id.
+- `MovesApp.swift`: registered a `Window("Moves Help", id: …)` scene
+  (600×700, content-resizable, centered) and a `CommandGroup(replacing:
+  .help)` that puts "Moves Help" in the Help menu bound to ⌘?. Pulled
+  `@Environment(\.openWindow)` up to the `App` level so the commands
+  closure can dispatch it.
+- Single window, no tabs — this is a teaching page, not configuration.
+
+`make check` and `make test` both clean. 164 tests, no business-logic
+changes.
+
 ## 2026-06-08 — Markdown notes: preview-first, edit on click
 
 Replaced the side-by-side Markdown editor + preview split inside the
