@@ -330,6 +330,46 @@ the per-item surface holds the *override*.
 
 ---
 
+## Menubar conveys three urgency states, not two
+
+> "some visual indication in the menu bar that a deadline is NEAR or
+> OVERDUE."
+
+**Rule.** A binary "urgent / not urgent" badge can't distinguish
+"approaching" from "absent." Reserve red for the past-tense state
+(overdue, can't fix it by hurrying) and use orange for the pre-tense
+state (near, you can still act). This matches the existing app
+vocabulary established under "Urgency vocabulary: orange = 'needs
+your attention'" — and Apple HIG, which calls out system red
+`#FF3B30` / `#FF453A` for destructive/urgent and system orange
+`#FF9500` / `#FF9F0A` for warning.
+
+**Landed.** Three-state menubar driven by
+`AppStore.renderedDeadlineUrgency`:
+
+- **Neutral.** Template knight, system tint. No chip.
+- **Near.** Knight tinted **system orange** (`Color.orange`). No
+  count chip — a tint-only "approaching" signal, not a precise
+  count. Triggered when any hard `captured`/`open` item is due in
+  the strict-future window `(now, now + 30 min]`.
+- **Overdue.** Knight tinted **system red** (`Color.red`) plus the
+  existing red `•N` count chip. Same 1-hour overdue cap as before:
+  once the item is more than an hour past due, it falls out of the
+  bucket and the menubar returns to neutral / near.
+
+Popover header mirrors the same state machine in matching language:
+
+- Overdue → "**•N overdue**" in red.
+- Near → "**•N soon**" in orange.
+- Neutral → no chip.
+
+**Generalize.** When a chrome surface conveys a state, ask whether
+the user can act *before* vs. *after* the event. Pre-event states
+get warning colors (orange/yellow); post-event states get urgency
+colors (red). They are different in kind and shouldn't share a tint.
+
+---
+
 ## Working notes (no rule yet, but worth recording)
 
 - **PaneShell/PaneListShell are now pure layout wrappers** (no title,

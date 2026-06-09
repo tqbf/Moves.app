@@ -2,6 +2,79 @@
 
 Newest first.
 
+## 2026-06-08 — Deadline alerts: three-state menubar urgency (near / overdue)
+
+Before this pass the menubar knight was binary: either red-tinted with
+a `•N` chip (overdue, capped to the 1-hour window the prior subagent
+landed) or template-neutral (no deadlines, or none within an hour).
+"NEAR but not yet passed" looked identical to "no deadlines at all".
+The user asked for a visible warning state so an approaching
+deadline pre-empts the cliff.
+
+Backend:
+
+- `Sources/Moves/Persistence/Repositories/ItemRepository.swift`:
+  new `dueSoonHardCount(now:soonWindow:)`, default 30-minute window.
+  Same status (`captured`/`open`) + `interruption_kind = hard`
+  predicate as `dueOrOverdueHardCount`, but the time range flips to
+  strict-future `(now, now + soonWindow]`. Inclusive upper bound,
+  exclusive lower bound — `now` itself belongs to the
+  `dueOrOverdueHardCount` bucket.
+- `Sources/Moves/Domain/DeadlineUrgency.swift`: new
+  `enum DeadlineUrgency { case none, near, overdue }`. The
+  enum's doc comment carries the system-color policy (HIG red
+  `#FF3B30` for urgent/destructive, system orange `#FF9500` for
+  warning — confirmed against the macos-design skill's
+  `visual-design.md`).
+- `Sources/Moves/Model/AppStore.swift`:
+  - New `private(set) var dueSoonHardCount: Int = 0`.
+  - `refreshDueCount()` now fans out to both repo queries via
+    `async let` and awaits in sequence. Same call-sites as before.
+  - New computed `var renderedDeadlineUrgency: DeadlineUrgency`.
+    `.overdue` if `dueOrOverdueHardCount > 0`, else `.near` if
+    `dueSoonHardCount > 0`, else `.none`. Gated on the
+    `preferences.badgeEnabled` toggle, so a user who disabled the
+    badge gets `.none` regardless of DB state — matches
+    `renderedBadgeCount`'s policy.
+
+Menubar UI (`Sources/Moves/MovesApp.swift`):
+
+- New `knightImage(for:)` helper builds the knight `Image` per
+  `DeadlineUrgency` case. Neutral: `.template` rendering mode +
+  `foregroundStyle(.primary)` (system light/dark tinting). Near:
+  `.original` + `.orange`. Overdue: `.original` + `.red`.
+- The `•N` count chip is overdue-only. Near is tint-only — a
+  glanceable warning, not a precise count, per the user's framing.
+
+Popover header (`Sources/Moves/Views/Popover/MenuPopoverView.swift`):
+
+- The `•N due` orange chip became a three-state switch over
+  `renderedDeadlineUrgency`. Overdue → "•N overdue" in red,
+  near → "•N soon" in orange, none → no chip. Matches the menubar
+  tint.
+
+Tests added (1 net):
+
+- `PersistenceRoundTripTests.testDueSoonHardCountWindowBoundaries`
+  — fixtures at 10/20/29/30 (boundary)/31/45 minutes ahead plus
+  soft + done filters; expects 4 (10, 20, 29, 30) and verifies
+  status / interruption-kind / exact-now exclusion.
+
+174 tests, all passing (was 173).
+
+Visual gate via computer-use against `build/Moves.app`:
+
+1. Inserted a hard `captured` item due in 20 minutes via sqlite3.
+   Launched Moves. Menubar knight tinted **orange**, no chip.
+   Popover header showed **"•1 soon"** in orange.
+2. Updated the same item's `due_at` to 10 minutes in the past,
+   relaunched. Menubar knight tinted **red** with a red **"1"**
+   chip. Popover header showed **"•1 overdue"** in red.
+3. Step 3 (60-minute drop-off) was not exercised at runtime — the
+   1-hour cap is already covered by
+   `testDueOrOverdueHardCountCapsAtOneHour` from the prior backend
+   pass and doesn't ride on this change.
+
 ## 2026-06-08 — Deadline alerts: per-item offset chips in capture + edit-due (UI)
 
 Surfaces the multi-offset backend that landed in 8a707b7. Until now the

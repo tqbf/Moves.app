@@ -22,6 +22,14 @@ final class AppStore {
   private(set) var threads: [Thread] = []
   private(set) var capturedItems: [Item] = []
   private(set) var dueOrOverdueHardCount: Int = 0
+  /// Count of hard-interruption items whose `due_at` is in the
+  /// near-future window `(now, now + 30min]`. Drives the menubar
+  /// `DeadlineUrgency.near` state (orange knight tint) so the user
+  /// gets a glanceable warning before a deadline passes. Refreshed
+  /// alongside `dueOrOverdueHardCount`; both are maintained on the
+  /// DB side regardless of the badge-enabled preference, the
+  /// preference only gates the rendered urgency.
+  private(set) var dueSoonHardCount: Int = 0
   private(set) var loadError: String?
 
   /// Cached `current_state` row. Mirrors the single-row table so the
@@ -219,7 +227,15 @@ final class AppStore {
   func refreshDueCount() async {
     let now = Int64(Date().timeIntervalSince1970)
     do {
-      dueOrOverdueHardCount = try await itemRepository.dueOrOverdueHardCount(now: now)
+      // Two independent counts, one DB hop each. We could combine into a
+      // single SELECT with CASE WHEN, but they're cheap and keeping them
+      // as separate repo functions lets the badge tests target each
+      // window independently. The 30-minute soonWindow is the default;
+      // changing the menubar warning horizon is a one-line repo change.
+      async let overdue = itemRepository.dueOrOverdueHardCount(now: now)
+      async let soon = itemRepository.dueSoonHardCount(now: now, soonWindow: 30 * 60)
+      dueOrOverdueHardCount = try await overdue
+      dueSoonHardCount = try await soon
     } catch {
       loadError = "Badge refresh failed: \(error)"
     }
@@ -314,6 +330,26 @@ final class AppStore {
   /// is still maintained for cheap future re-enablement.
   var renderedBadgeCount: Int {
     preferences.badgeEnabled ? dueOrOverdueHardCount : 0
+  }
+
+  /// Three-state urgency signal the menubar and popover header chip use to
+  /// decide tint + copy. `.overdue` dominates `.near` when both buckets
+  /// have rows — a deadline that already passed is more important than
+  /// one approaching. Gated on the badge-enabled preference for the same
+  /// reason as `renderedBadgeCount`: a user who turned the badge off
+  /// asked not to see urgency in the chrome.
+  ///
+  /// Color policy (Apple HIG — see `references/visual-design.md` in the
+  /// macos-design skill, which calls out system red `#FF3B30` for
+  /// destructive/urgent and system orange `#FF9500` for warning):
+  /// - `.overdue` → red knight + `•N` red count chip
+  /// - `.near`    → orange knight, no chip (tint-only "approaching")
+  /// - `.none`    → template knight, no chip
+  var renderedDeadlineUrgency: DeadlineUrgency {
+    guard preferences.badgeEnabled else { return .none }
+    if dueOrOverdueHardCount > 0 { return .overdue }
+    if dueSoonHardCount > 0 { return .near }
+    return .none
   }
 
   /// Resolved alert-offset list for a captured item of `kind`. Drives the

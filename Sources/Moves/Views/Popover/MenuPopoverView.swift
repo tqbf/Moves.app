@@ -78,14 +78,29 @@ struct MenuPopoverView: View {
       Text("Moves")
         .font(.headline)
       Spacer()
-      // Phase 6: badge respects the user's render-time toggle. When
-      // disabled, the chip vanishes from both the popover and the menubar.
-      if store.renderedBadgeCount > 0 {
-        Text("•\(store.renderedBadgeCount) due")
+      // Three-state urgency chip mirroring the menubar tint:
+      //   .overdue → "•N overdue", red — matches menubar red chip
+      //   .near    → "•N soon",    orange — menubar shows tint-only,
+      //              but here we have the horizontal room for a count
+      //   .none    → no chip
+      // Phase 6: gated on the badge-enabled preference via
+      // `renderedDeadlineUrgency`. A user who turned the badge off
+      // sees neither tint nor chip.
+      switch store.renderedDeadlineUrgency {
+      case .overdue:
+        Text("•\(store.renderedBadgeCount) overdue")
+          .font(.caption)
+          .fontWeight(.medium)
+          .foregroundStyle(.red)
+          .accessibilityLabel("\(store.renderedBadgeCount) overdue")
+      case .near:
+        Text("•\(store.dueSoonHardCount) soon")
           .font(.caption)
           .fontWeight(.medium)
           .foregroundStyle(.orange)
-          .accessibilityLabel("\(store.renderedBadgeCount) due or overdue")
+          .accessibilityLabel("\(store.dueSoonHardCount) approaching")
+      case .none:
+        EmptyView()
       }
     }
     .padding(.horizontal, 14)
