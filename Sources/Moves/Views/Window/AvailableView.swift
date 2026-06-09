@@ -15,6 +15,7 @@ import SwiftUI
 /// underlying thread.
 struct AvailableView: View {
   @Environment(AppStore.self) private var store
+  @Environment(\.openSettings) private var openSettings
   var onSelectThread: (String) -> Void
 
   /// List selection drives the inspector contents. String = thread id.
@@ -175,7 +176,17 @@ struct AvailableView: View {
   @ViewBuilder
   private func workingStatusBody(now: Date) -> some View {
     let working = store.isWorkTime
-    SettingsLink {
+    // Plain `Button` + `openSettings()` instead of `SettingsLink`.
+    // SettingsLink hosted inside a `safeAreaInset(edge: .bottom)` on a
+    // List triggered an
+    // `_postWindowNeedsUpdateConstraintsUnlessPostingDisabled` crash on
+    // first layout under macOS 14.4 on at least one machine — see the
+    // 2026-06-09 launch-crash entry in PROGRESS.md.
+    // `Environment(\.openSettings)` reaches SwiftUI's `Settings { }`
+    // scene reliably on macOS 14+ without the constraint hazard.
+    Button {
+      openSettings()
+    } label: {
       HStack(spacing: 6) {
         Circle()
           .fill(working ? Color.green : Color.secondary.opacity(0.6))

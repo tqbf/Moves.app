@@ -2,6 +2,46 @@
 
 Newest first.
 
+## 2026-06-09 — Launch crash fix (macOS 14.4)
+
+Crash report from Thomas's machine after the glow-up PR landed:
+`NSInternalInconsistencyException` thrown from
+`-[NSWindow _postWindowNeedsUpdateConstraintsUnlessPostingDisabled]`
+during the first display-cycle layout pass. AppKit's "view modified
+during update" guard — something in the freshly added SwiftUI hierarchy
+was invalidating constraints while the window was already inside an
+update-constraints pass. Couldn't reproduce on my Mac15,X / macOS 14.4
+build, but two suspects in the new code matched the symptom:
+
+1. **`Spacer()` as the leading child of
+   `ToolbarItemGroup(placement: .primaryAction)`** in `RootWindow`. The
+   `.primaryAction` placement already pins items trailing — the leading
+   Spacer was redundant *and* well-known to confuse the toolbar's
+   intrinsic-content-size computation. Removed.
+2. **`SettingsLink` nested in `safeAreaInset(edge: .bottom)`** in
+   `AvailableView`'s working-hours footer. `SettingsLink` carries its
+   own AppKit hosting path that triggers a constraint invalidation when
+   inserted inside a `List`-anchored inset on macOS 14.4. Replaced with
+   a plain `Button { openSettings() }` driven by the
+   `@Environment(\.openSettings)` action — same Settings-scene
+   destination, no constraint hazard. One regression: `openSettings`
+   doesn't accept a tab; the user lands on General and clicks "Working
+   Hours" themselves. Worth the trade vs a launch crash.
+
+Both fixes verified locally: `make` + launch + 30-second alive check;
+clicking the footer opens Settings → General; `make check` + `make test`
+green (still 206).
+
+Heads-up for future agents working on this surface:
+
+- `SettingsLink` is the SwiftUI-idiomatic way to bridge to the Settings
+  scene, but it has constraint-system side effects when hosted inside a
+  `List`'s `safeAreaInset` on macOS 14.x. If you reintroduce it, host
+  it outside the inset (e.g. at the `NavigationSplitView`'s root or in
+  a toolbar) — or stick with the `openSettings()` action.
+- `ToolbarItemGroup(placement: .primaryAction)` — don't precede items
+  with a leading `Spacer()`. The placement already trails the items.
+
 ## 2026-06-09 — UI glow-up: live visual gate + inspector default
 
 Live sweep against `build/Moves.app` after batches 1–8 landed. Caught two

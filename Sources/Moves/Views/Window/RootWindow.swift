@@ -87,10 +87,11 @@ struct RootWindow: View {
   @ToolbarContentBuilder
   private var toolbarItems: some ToolbarContent {
     ToolbarItemGroup(placement: .primaryAction) {
-      // TODO: Wire search backend (batch 7). Field is rendered disabled
-      // so the layout slot is real and the placeholder reads
-      // intentionally "coming soon" rather than broken.
-      Spacer()
+      // `.primaryAction` already pins items to the trailing edge — a
+      // leading `Spacer()` is redundant here and (on macOS 14.4) caused
+      // an `_postWindowNeedsUpdateConstraintsUnlessPostingDisabled`
+      // crash on first layout. The toolbar items themselves render at
+      // the trailing edge without it.
       WorkingStatusIndicator(isWorkTime: store.isWorkTime)
       Button {
         CapturePaletteSingleton.shared?.show()
