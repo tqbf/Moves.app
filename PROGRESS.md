@@ -2,6 +2,50 @@
 
 Newest first.
 
+## 2026-06-09 — Inspector toggle crash fix (macOS 14.4)
+
+After the earlier launch-crash patches (Spacer-in-toolbar + SettingsLink),
+a fresh `make clean` build still crashed on Thomas's machine — this time
+when he clicked the inspector reveal/hide affordance on the Available
+pane. Same exception signature:
+`_postWindowNeedsUpdateConstraintsUnlessPostingDisabled`.
+
+Root cause: `InspectorColumn` used the pattern
+
+```swift
+if isVisible {
+    HStack { … }
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+}
+```
+
+Inserting / removing a view *with* a transition fires constraint
+invalidation from inside an active AppKit layout pass when the SwiftUI
+hierarchy contains `_NSConstraintBasedLayoutHostingView` shims (which
+a `Window` scene nested in `NavigationSplitView` always does). On
+machines where the constraint engine is more strict, this trips the
+"posting disabled" assertion. The pattern works on some Macs and not
+others — neither of which is debuggable from the SwiftUI side.
+
+Fix: always-mounted, width-animated rail.
+`Sources/Moves/Views/Window/InspectorColumn.swift`:
+
+- The HStack is always in the view tree; its outer `.frame(width:)`
+  animates between `0` and `PaneMetrics.inspectorWidth`.
+- `.clipped()` hides the rail content while the width is collapsed.
+- `.accessibilityHidden(!isVisible)` keeps VoiceOver in step.
+- The leading `Divider()` fades via `.opacity` so it doesn't appear
+  ahead of the rail content while the width is animating in.
+
+The `withAnimation(.easeInOut(duration: 0.18))` blocks in each pane
+toggle still apply — they now animate the frame width instead of an
+insertion transition, which is what AppKit's constraint engine can
+reconcile safely.
+
+Verified locally: toggle the Available inspector closed and open, no
+crash; row stretches/contracts cleanly; `make check` + `make test` green
+at 206.
+
 ## 2026-06-09 — Launch crash fix (macOS 14.4)
 
 Crash report from Thomas's machine after the glow-up PR landed:

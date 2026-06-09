@@ -29,21 +29,32 @@ struct InspectorColumn<Content: View>: View {
   /// existing `withInspector(...)` helpers below.
   @ViewBuilder var content: () -> Content
 
+  /// Always-mounted, width-animated rail. Earlier versions used
+  /// `if isVisible { ... }.transition(.move.combined(opacity))`, which
+  /// crashed on macOS 14.4 with
+  /// `_postWindowNeedsUpdateConstraintsUnlessPostingDisabled` — the
+  /// insertion/removal-with-transition pattern fires constraint
+  /// invalidation from inside an active layout pass when the view
+  /// tree contains NSHostingView shims (which a SwiftUI Window inside
+  /// `NavigationSplitView` does). Animating a `width` between `0` and
+  /// `inspectorWidth` keeps the view mounted, lets AppKit's
+  /// constraint engine see a single stable hierarchy, and `.clipped()`
+  /// hides the rail content while it's collapsed.
   var body: some View {
-    if isVisible {
-      HStack(spacing: 0) {
-        Divider()
-        ScrollView {
-          content()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
-        }
-        .frame(width: PaneMetrics.inspectorWidth)
-        .background(.background.secondary)
+    HStack(spacing: 0) {
+      Divider()
+        .opacity(isVisible ? 1 : 0)
+      ScrollView {
+        content()
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 16)
       }
-      .transition(.move(edge: .trailing).combined(with: .opacity))
+      .background(.background.secondary)
     }
+    .frame(width: isVisible ? PaneMetrics.inspectorWidth : 0)
+    .clipped()
+    .accessibilityHidden(!isVisible)
   }
 }
 
