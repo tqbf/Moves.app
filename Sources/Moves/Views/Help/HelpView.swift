@@ -162,6 +162,98 @@ struct HelpView: View {
           """)
         }
 
+        section("Importing regimented threads") {
+          paragraph("""
+          A regimented thread is one where the work is laid out in \
+          ordered segments — a study plan, a course curriculum, a \
+          training program. You can build one from scratch inside the \
+          app, but for anything longer than a few segments it's faster \
+          to write the whole plan in a Markdown file and import it via \
+          **Import Markdown…** in the sidebar footer.
+          """)
+          paragraph("""
+          The grammar is deterministic. A YAML frontmatter block sets \
+          the thread-level metadata; each `## ` heading starts a \
+          segment; `- [ ] / - [x]` checkboxes become items; anything \
+          else becomes the segment's body Markdown. No LLM guesswork.
+          """)
+
+          subheading("Thread frontmatter")
+          paragraph("""
+          Wrap the frontmatter in `---` on its own line, top and bottom. \
+          Supported keys:
+          """)
+          codeBlock("""
+          ---
+          title: Python Refresh
+          kind: regimented
+          visibility: normal
+          default_estimate_minutes: 60
+          ---
+          """)
+          paragraph("""
+          `title` is the only required key; everything else defaults. \
+          `kind` accepts `regimented` (the typical case) or `normal`. \
+          `visibility` accepts `always`, `normal`, `hide_during_work`, \
+          or `only_during_work` — the same options the per-thread \
+          visibility pill shows. `default_estimate_minutes` is the \
+          fallback estimate for any segment that doesn't set its own.
+          """)
+
+          subheading("Segment headings + metadata")
+          paragraph("""
+          Each segment starts with a `## ` H2. The lines that follow \
+          (before the first checkbox or blank-line-then-body) can carry \
+          per-segment metadata as `key: value` lines:
+          """)
+          codeBlock("""
+          ## Day 01: Modern Python syntax
+          date: 2026-06-01
+          due: 2026-06-12 17:00
+          estimate: 60
+          move: Write a tiny parser using dataclasses and match/case.
+          """)
+          paragraph("""
+          `move` is the segment's built-in "next move" — what shows up \
+          in Available when this segment is active. `date` is a planned \
+          start (informational only). `due` is the deadline if any — \
+          accepts `YYYY-MM-DD` for a date or `YYYY-MM-DD HH:MM` for a \
+          datetime. `estimate` is rough minutes; it overrides the \
+          thread's `default_estimate_minutes`.
+          """)
+
+          subheading("Items and body")
+          paragraph("""
+          Markdown checkboxes inside a segment become tracked items:
+          """)
+          codeBlock("""
+          - [ ] Review dataclasses
+          - [ ] Review type hints
+          - [x] Write parser
+          - [ ] Add pytest cases
+          """)
+          paragraph("""
+          `- [x]` lands as a completed item, `- [ ]` as open. Any \
+          remaining Markdown after the metadata block and not in a \
+          checkbox becomes the segment's body — paragraphs, sub-lists, \
+          links, fenced code blocks all survive.
+          """)
+
+          subheading("Ordering and import semantics")
+          paragraph("""
+          Segment order is file order. The first segment becomes \
+          **active** on import; the rest stay **pending**. Importing \
+          the same file twice creates two distinct threads — v1 is \
+          create-only, not update-in-place. The importer surfaces a \
+          warning in the preview when it sees a duplicate title so \
+          you can cancel before committing.
+          """)
+          aside("""
+          A complete example lives in `INITIAL-PLAN.md §9` if you want \
+          a longer reference.
+          """)
+        }
+
         section("What Moves is NOT") {
           paragraph("""
           Moves is deliberately opinionated about what it leaves out. \
@@ -244,6 +336,39 @@ struct HelpView: View {
       .font(.callout)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
+  }
+
+  /// A second-level heading inside a section. Used by the "Importing
+  /// regimented threads" section where the surface is large enough to
+  /// benefit from internal structure. `.headline` semibold sits one step
+  /// below the section heading so the page hierarchy stays readable
+  /// without the eye losing the section boundary.
+  private func subheading(_ text: String) -> some View {
+    Text(text)
+      .font(.headline)
+      .foregroundStyle(.primary)
+      .padding(.top, 4)
+  }
+
+  /// A fenced code-block style. Monospaced text on a subtle filled
+  /// background, full column width — same idiom as the popover's segment
+  /// code rendering. Preserves leading whitespace so YAML / Markdown
+  /// examples read cleanly.
+  private func codeBlock(_ text: String) -> some View {
+    Text(text)
+      .font(.system(.callout, design: .monospaced))
+      .foregroundStyle(.primary)
+      .textSelection(.enabled)
+      .padding(10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+          .fill(Color(nsColor: .textBackgroundColor))
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+          .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+      )
   }
 }
 
