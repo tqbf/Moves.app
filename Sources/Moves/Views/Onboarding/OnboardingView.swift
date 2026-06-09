@@ -1,4 +1,3 @@
-import AppKit
 import KeyboardShortcuts
 import SwiftUI
 
@@ -283,13 +282,5 @@ struct OnboardingView: View {
     await store.markOnboardingComplete()
     AppSignals.shared.dismissOnboarding()
     dismissWindow(id: PopoverWindowID.onboarding.rawValue)
-    // Belt-and-suspenders: dismissWindow can occasionally no-op if the
-    // window isn't key, leaving the onboarding visible while every other
-    // state has been cleaned up. Close the underlying NSWindow directly
-    // so the user never gets stuck on this screen.
-    for window in NSApplication.shared.windows
-      where window.identifier?.rawValue == PopoverWindowID.onboarding.rawValue {
-      window.close()
-    }
   }
 }
