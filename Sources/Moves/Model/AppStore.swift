@@ -440,10 +440,21 @@ final class AppStore {
   func capture(
     _ input: String,
     now: Date = Date(),
-    offsetsOverride: [Int]? = nil
+    offsetsOverride: [Int]? = nil,
+    dueAtOverride: DueOverride? = nil
   ) async -> ParsedCapture? {
-    let parsed = CaptureParser.parse(input, now: now)
+    var parsed = CaptureParser.parse(input, now: now)
     guard !parsed.title.isEmpty else { return nil }
+
+    // Manual override from the capture overlay's date picker. When set, it
+    // wins over whatever the parser found and clears low-confidence
+    // signaling — the user told us exactly what they meant.
+    if let dueAtOverride {
+      parsed.dueAt = dueAtOverride.dueAt
+      parsed.dueKind = .datetime
+      parsed.interruptionKind = dueAtOverride.interruptionKind
+      parsed.lowConfidence = false
+    }
 
     let dueAtSeconds = parsed.dueAt.map { Int64($0.timeIntervalSince1970) }
     let itemKind: ItemKind = {
@@ -745,15 +756,25 @@ final class AppStore {
     threads[idx].kind = kind
     threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
     persist(threads[idx])
+    // Same frozen-snapshot rationale as `setVisibility` — see note there.
+    Task { await rebuildAvailable() }
   }
 
   /// Set the §6 visibility policy on `thread`. Drives the de-emphasize /
   /// hide / only-during-work behavior on the Available list.
+  ///
+  /// `availableThreads` caches a frozen snapshot of each `Thread` inside
+  /// `AvailableThread`, so the popover's grouping reads the visibility
+  /// from the cache, not the live `threads[idx]`. Without rebuilding,
+  /// the second/third `setVisibility(..., to: .downweightWork)` call
+  /// looks like a no-op in the popover until some unrelated action
+  /// (start, capture, …) incidentally triggers a rebuild.
   func setVisibility(_ thread: Thread, to visibility: ThreadVisibility) {
     guard let idx = threads.firstIndex(of: thread) else { return }
     threads[idx].visibility = visibility
     threads[idx].updatedAt = Int64(Date().timeIntervalSince1970)
     persist(threads[idx])
+    Task { await rebuildAvailable() }
   }
 
   func delete(_ thread: Thread) {
@@ -1224,4 +1245,16 @@ final class AppStore {
       return WeeklySummary.empty(weekStart: weekStart)
     }
   }
+}
+
+/// A manual due-date override the capture overlay applies to the next
+/// `AppStore.capture(_:)` call. Carries both the wall-clock moment and the
+/// interruption kind the user wants attached to the item — the overlay
+/// converts the parser's inferred kind into the override kind via the
+/// "is this a hard deadline?" question, but for now we map all manual
+/// overrides to `.hard` (the date-picker is reserved for deadlines that
+/// matter; soft-deadline UX is the parser's domain).
+struct DueOverride: Equatable, Sendable {
+  var dueAt: Date
+  var interruptionKind: InterruptionKind = .hard
 }

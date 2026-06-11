@@ -171,6 +171,38 @@ final class CaptureParserTests: XCTestCase {
     XCTAssertEqual(result.interruptionKind, .soft)
   }
 
+  func testTomorrowAtThreePM() {
+    // Regression: `… tomorrow at 3pm` used to be silently downgraded to
+    // bare `at 3pm` (= today 3pm), with the title left as "test API
+    // tomorrow". The 3-token `tomorrow at <H>` form is now first-class.
+    let result = parse("test API tomorrow at 3pm")
+    XCTAssertEqual(result.title, "test API")
+    XCTAssertEqual(result.dueAt, date(2026, 6, 9, 15, 0))
+    XCTAssertEqual(result.dueKind, .datetime)
+    XCTAssertEqual(result.interruptionKind, .soft)
+  }
+
+  func testTomorrowAtBareNineRollsToTomorrow() {
+    // `… tomorrow at 9` (ambiguous bare hour) should still resolve to
+    // tomorrow 9am — the `tomorrow` anchor wins. Without the 3-token
+    // rule this regressed to "next 9 o'clock" (today 9pm at our `now`).
+    let result = parse("standup tomorrow at 9")
+    XCTAssertEqual(result.title, "standup")
+    XCTAssertEqual(result.dueAt, date(2026, 6, 9, 9, 0))
+    XCTAssertEqual(result.dueKind, .datetime)
+    XCTAssertEqual(result.interruptionKind, .soft)
+  }
+
+  func testWeekdayAtFivePM() {
+    // Same 3-token shape, but anchored on a weekday. `friday at 5pm`
+    // must not be eaten by the bare `at 5pm` rule.
+    let result = parse("ship draft friday at 5pm")
+    XCTAssertEqual(result.title, "ship draft")
+    XCTAssertEqual(result.dueAt, date(2026, 6, 12, 17, 0))
+    XCTAssertEqual(result.dueKind, .datetime)
+    XCTAssertEqual(result.interruptionKind, .soft)
+  }
+
   // MARK: - `friday` / `friday <H>pm`
 
   func testFridayAlone() {
@@ -300,5 +332,45 @@ final class CaptureParserTests: XCTestCase {
     let result = parse("ship draft Friday")
     XCTAssertEqual(result.title, "ship draft")
     XCTAssertEqual(result.dueAt, date(2026, 6, 12, 0, 0))
+  }
+
+  // MARK: - Low-confidence signaling
+
+  func testTomorrowAloneIsLowConfidence() {
+    // Bare `tomorrow` matches as start-of-day with no clock — capture
+    // overlay needs to flag this so the user can tap the chip and pick
+    // a time rather than trust the inferred midnight.
+    let result = parse("yard work tomorrow")
+    XCTAssertTrue(result.lowConfidence)
+  }
+
+  func testTomorrowAtTimeIsHighConfidence() {
+    // `tomorrow at 3pm` resolves to a precise datetime — no ambiguity.
+    let result = parse("test API tomorrow at 3pm")
+    XCTAssertFalse(result.lowConfidence)
+  }
+
+  func testBareWeekdayIsLowConfidence() {
+    // Same shape as bare `tomorrow`: a day-only match with no time.
+    let result = parse("ship draft Friday")
+    XCTAssertTrue(result.lowConfidence)
+  }
+
+  func testWeekdayWithTimeIsHighConfidence() {
+    let result = parse("submit calc homework Friday 5pm")
+    XCTAssertFalse(result.lowConfidence)
+  }
+
+  func testNoMatchIsNotLowConfidence() {
+    // Absence of a chip is its own signal — don't claim low confidence
+    // when the parser declined to recognize anything at all.
+    let result = parse("read the asyncio docs sometime")
+    XCTAssertFalse(result.lowConfidence)
+  }
+
+  func testISODateAloneIsLowConfidence() {
+    // `YYYY-MM-DD` matches as `.date` with no clock — also ambiguous.
+    let result = parse("review draft 2026-06-12")
+    XCTAssertTrue(result.lowConfidence)
   }
 }

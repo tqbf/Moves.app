@@ -400,18 +400,18 @@ private struct ItemRow: View {
       .buttonStyle(.plain)
       .accessibilityLabel(isDone ? "Mark not done" : "Mark done")
 
-      VStack(alignment: .leading, spacing: 2) {
-        Text(item.title)
-          .font(.system(size: 13))
-          .strikethrough(isDone, color: .secondary)
-          .foregroundStyle(isDone ? .secondary : .primary)
-        if let dueLabel {
-          Text(dueLabel)
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
-        }
-      }
+      Text(item.title)
+        .font(.system(size: 13))
+        .strikethrough(isDone, color: .secondary)
+        .foregroundStyle(isDone ? .secondary : .primary)
       Spacer()
+      // Reuse DeadlineChip rather than rendering raw "8/14 at 3:00 PM"
+      // text so this row picks up the same red/orange urgency treatment
+      // as Available / Captured / Deadlines. Done items hide the chip —
+      // a completed item's deadline is no longer pressure.
+      if !isDone, let dueDate {
+        DeadlineChip(dueAt: dueDate, size: .compact)
+      }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
@@ -420,13 +420,8 @@ private struct ItemRow: View {
 
   private var isDone: Bool { item.status == .done }
 
-  private var dueLabel: String? {
+  private var dueDate: Date? {
     guard let due = item.dueAt else { return nil }
-    let date = Date(timeIntervalSince1970: TimeInterval(due))
-    let f = DateFormatter()
-    f.dateStyle = .short
-    f.timeStyle = .short
-    f.doesRelativeDateFormatting = true
-    return f.string(from: date)
+    return Date(timeIntervalSince1970: TimeInterval(due))
   }
 }

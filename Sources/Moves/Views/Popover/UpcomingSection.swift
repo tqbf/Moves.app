@@ -24,12 +24,12 @@ struct UpcomingSection: View {
             .lineLimit(1)
           Text(runwayLabel)
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(PaneMetrics.secondaryText)
         }
       } else {
         Text("Nothing hard ahead")
           .font(.callout)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(PaneMetrics.secondaryText)
       }
 
       let others = otherUpcoming
@@ -80,6 +80,9 @@ private struct UpcomingRow: View {
 
   var body: some View {
     HStack(spacing: 6) {
+      // Leading icon still encodes interruption kind (hard / soft).
+      // The trailing DeadlineChip encodes time pressure — the two
+      // dimensions are independent and the popover row carries both.
       Image(systemName: item.interruptionKind == .hard ? "bell.fill" : "calendar")
         .font(.caption2)
         .foregroundStyle(item.interruptionKind == .hard ? .orange : .secondary)
@@ -90,17 +93,11 @@ private struct UpcomingRow: View {
         .lineLimit(1)
       Spacer(minLength: 4)
       if let due = item.dueAt {
-        Text(Self.formatter.string(from: Date(timeIntervalSince1970: TimeInterval(due))))
-          .font(.caption)
-          .foregroundStyle(.tertiary)
+        DeadlineChip(
+          dueAt: Date(timeIntervalSince1970: TimeInterval(due)),
+          size: .compact
+        )
       }
     }
   }
-
-  private static let formatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateStyle = .none
-    f.timeStyle = .short
-    return f
-  }()
 }

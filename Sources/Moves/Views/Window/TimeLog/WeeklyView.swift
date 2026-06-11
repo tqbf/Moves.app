@@ -16,11 +16,29 @@ struct WeeklyView: View {
   @State private var summary: WeeklySummary = .empty(weekStart: "")
 
   var body: some View {
-    PaneShell {
-      navigator
-      content
-    }
+    PaneShell(
+      title: "Time Log",
+      count: summary.entries.count,
+      accessory: { weekChip },
+      content: {
+        navigator
+        content
+      }
+    )
     .task(id: anchor) { await reload() }
+  }
+
+  /// Compact week chip surfaced in the pane header so the user sees
+  /// which window they're in even after scrolling. Matches the macOS
+  /// pattern of "current scope in the title strip."
+  @ViewBuilder
+  private var weekChip: some View {
+    Text(weekHeaderLabel)
+      .font(.system(size: 12, weight: .medium))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 8)
+      .padding(.vertical, 3)
+      .background(Capsule(style: .continuous).fill(.quaternary))
   }
 
   // MARK: - Subviews
@@ -62,10 +80,14 @@ struct WeeklyView: View {
   @ViewBuilder
   private var content: some View {
     if summary.entries.isEmpty {
+      // Batch 8, item 28 — copy aligned with the other empty states
+      // ("Work sessions will appear here"); systemImage trimmed to the
+      // plain `clock` glyph so the empty surface reads cleaner than the
+      // animated `clock.arrow.circlepath`.
       ContentUnavailableView(
-        "Nothing logged",
-        systemImage: "clock.arrow.circlepath",
-        description: Text("Rough time gets logged when you stop, switch, or finish a segment.")
+        "No work sessions yet",
+        systemImage: "clock",
+        description: Text("Work sessions will appear here. Stop, switch, or finish a segment to log rough time.")
       )
       .frame(maxWidth: .infinity)
       .padding(.top, 24)

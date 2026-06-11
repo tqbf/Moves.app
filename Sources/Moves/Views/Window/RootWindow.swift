@@ -43,6 +43,7 @@ struct RootWindow: View {
     // here just adds a redundant secondary heading inside the detail
     // toolbar.
     .navigationTitle("")
+    .toolbar { toolbarItems }
     .task { await store.load() }
     .onChange(of: signals.presentOnboarding) { _, requested in
       if requested {
@@ -69,6 +70,36 @@ struct RootWindow: View {
     // any other top-level destination. No generic browser-history stack:
     // the only meaningful "back" relationship is thread detail → list.
     .focusedSceneValue(\.backFromThread, backAction)
+  }
+
+  // MARK: - Toolbar
+
+  /// Top-of-window toolbar strip. Previously empty (wasted real estate
+  /// flagged in `plans/ui-glowup.md` item 7). Now hosts:
+  ///   - Quick-capture button (opens the global capture palette via the
+  ///     same singleton the menu-bar popover uses).
+  ///   - Working-status indicator (echoes the Available footer pill but
+  ///     in the toolbar so the user knows the state from any pane).
+  ///   - A search field stub. Search isn't wired in this batch — the
+  ///     field is intentionally a `.disabled` placeholder so the toolbar
+  ///     layout is right for batch-7 work, but no fake results can come
+  ///     out of it. See TODO below.
+  @ToolbarContentBuilder
+  private var toolbarItems: some ToolbarContent {
+    ToolbarItemGroup(placement: .primaryAction) {
+      // `.primaryAction` already pins items to the trailing edge — a
+      // leading `Spacer()` is redundant here and (on macOS 14.4) caused
+      // an `_postWindowNeedsUpdateConstraintsUnlessPostingDisabled`
+      // crash on first layout. The toolbar items themselves render at
+      // the trailing edge without it.
+      WorkingStatusIndicator(isWorkTime: store.isWorkTime)
+      Button {
+        CapturePaletteSingleton.shared?.show()
+      } label: {
+        Label("Quick capture", systemImage: "plus.circle")
+      }
+      .help("Open the capture palette (⌥Space)")
+    }
   }
 
   /// Only non-nil when a thread is currently selected; the App-scope
@@ -163,7 +194,10 @@ struct RootWindow: View {
     case .available, .none:
       AvailableView(onSelectThread: routeToThread)
     case .current:
-      CurrentDetailView(onSelectThread: routeToThread)
+      CurrentDetailView(
+        onSelectThread: routeToThread,
+        onGoAvailable: { selection = .available }
+      )
     case .threadsList:
       ThreadsListView(onSelectThread: routeToThread)
     case let .thread(id):
@@ -185,5 +219,29 @@ struct RootWindow: View {
 
   private func routeToThread(_ id: String) {
     selection = .thread(id)
+  }
+}
+
+/// Compact "Working hours" indicator surfaced in the window toolbar. The
+/// state matters everywhere (it changes how Available sorts; in §12 it
+/// also gates deemphasis) — but the existing Available footer pill is
+/// only visible on that pane. Mirroring it in the toolbar means the user
+/// always sees the bit without it competing for content space.
+private struct WorkingStatusIndicator: View {
+  let isWorkTime: Bool
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Circle()
+        .fill(isWorkTime ? Color.orange : Color.secondary.opacity(0.5))
+        .frame(width: 6, height: 6)
+      Text(isWorkTime ? "Working" : "Off hours")
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 3)
+    .background(Capsule(style: .continuous).fill(.quaternary))
+    .help(isWorkTime ? "Inside the configured working-hours window" : "Outside the configured working-hours window")
   }
 }

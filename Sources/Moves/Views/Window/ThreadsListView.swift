@@ -18,24 +18,16 @@ struct ThreadsListView: View {
   /// subsequent Cmd-N (which goes false → true again) refocuses cleanly.
   @Bindable private var signals = AppSignals.shared
 
+  /// Row selection — kept for a possible future detail surface; no
+  /// longer drives an inspector.
+  @State private var selection: String?
+
   var body: some View {
-    PaneListShell {
-      VStack(spacing: 0) {
-        newRow
-          .padding(.horizontal, 28)
-          .padding(.bottom, 6)
-        List {
-          section("Active", threads: store.threads(matching: .active))
-          section("Parked", threads: store.threads(matching: .parked))
-          section("Done", threads: store.threads(matching: .done))
-        }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
-        // Align row content to the 28pt grid the PaneListShell header
-        // and the new-thread card above already use.
-        .listRowInsets(EdgeInsets(top: 4, leading: 28, bottom: 4, trailing: 28))
-      }
-    }
+    PaneListShell(
+      title: "Threads",
+      count: store.threads.count,
+      content: { content }
+    )
     .onChange(of: signals.requestNewThread) { _, requested in
       if requested { focusNewThreadInput() }
     }
@@ -44,6 +36,39 @@ struct ThreadsListView: View {
       // mounted (e.g. switching from the Available pane). RootWindow
       // flipped selection but left the flag set; pick it up here.
       if signals.requestNewThread { focusNewThreadInput() }
+    }
+  }
+
+  @ViewBuilder
+  private var content: some View {
+    VStack(spacing: 0) {
+      newRow
+        .padding(.horizontal, PaneMetrics.horizontalInset)
+        .padding(.top, PaneMetrics.headerToContentSpacing)
+        .padding(.bottom, 6)
+      if store.threads.isEmpty {
+        // Batch 8, item 28 — designed empty state. The new-thread row
+        // stays mounted above (it's the action), and the empty view
+        // points the user at it. Tapping "New thread…" focuses the
+        // inline field via the same path Cmd-N uses.
+        ContentUnavailableView {
+          Label("No threads yet", systemImage: "square.stack.3d.up")
+        } description: {
+          Text("Threads are the units of ongoing work in Moves. Create one to get started.")
+        } actions: {
+          Button("New thread…") { focusNewThreadInput() }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        List(selection: $selection) {
+          section("Active", threads: store.threads(matching: .active))
+          section("Parked", threads: store.threads(matching: .parked))
+          section("Done", threads: store.threads(matching: .done))
+        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+      }
     }
   }
 
@@ -60,26 +85,59 @@ struct ThreadsListView: View {
 
   // MARK: - New row
 
+  /// Inline composer at the top of the Threads pane. Native idiom is the
+  /// Reminders "+ New Reminder" row: a card that reads as editable, not
+  /// disabled. The previous treatment leaned on `.background.secondary`
+  /// fill + a system-tertiary placeholder — together they looked exactly
+  /// like a disabled control. Bumped contrast on three axes: a slightly
+  /// more present `.quaternary` fill, a thin separator stroke that turns
+  /// accent-tinted on focus (mirrors the macOS focus ring), and a body-
+  /// sized field with `.primary` foreground for typed text. The whole row
+  /// is the hit target — tapping the icon, the padding, or the inert area
+  /// to the right all focus the field. Aux text "Press ⏎ to add" replaces
+  /// the floating "Add" button so the row stays a single horizontal slot.
   private var newRow: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 10) {
       Image(systemName: "plus.circle.fill")
+        .font(.system(size: 16, weight: .semibold))
         .foregroundStyle(.tint)
-      TextField("New thread…", text: $newTitle)
+        .accessibilityHidden(true)
+      TextField("New thread", text: $newTitle, prompt: Text("New thread"))
         .textFieldStyle(.plain)
+        .font(.body)
+        .foregroundStyle(.primary)
         .focused($addFocused)
         .onSubmit(commitNew)
-      if !newTitle.isEmpty {
+        .accessibilityLabel("New thread title")
+      Spacer(minLength: 6)
+      if newTitle.isEmpty {
+        Text("Press \u{23CE} to add")
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+          .accessibilityHidden(true)
+      } else {
         Button("Add", action: commitNew)
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
+          .keyboardShortcut(.defaultAction)
       }
     }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
     .background(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(.background.secondary)
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(.quaternary)
     )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(
+          addFocused ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator),
+          lineWidth: addFocused ? 1.5 : 0.5
+        )
+    )
+    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .onTapGesture { addFocused = true }
+    .animation(.easeInOut(duration: 0.12), value: addFocused)
   }
 
   private func commitNew() {
@@ -100,19 +158,20 @@ struct ThreadsListView: View {
     if !threads.isEmpty {
       Section(title) {
         ForEach(threads) { thread in
-          ThreadRowSummary(thread: thread, action: { onSelectThread(thread.id) })
-            .contextMenu {
-              Button("Open") { onSelectThread(thread.id) }
-              Divider()
-              Button("Mark Active") { store.setStatus(thread, to: .active) }
-                .disabled(thread.status == .active)
-              Button("Park") { store.setStatus(thread, to: .parked) }
-                .disabled(thread.status == .parked)
-              Button("Mark Done") { store.setStatus(thread, to: .done) }
-                .disabled(thread.status == .done)
-              Divider()
-              Button("Delete", role: .destructive) { store.delete(thread) }
-            }
+          ThreadRowSummary(
+            thread: thread,
+            isSelected: selection == thread.id,
+            action: { onSelectThread(thread.id) },
+            onRename: { newTitle in store.rename(thread, to: newTitle) }
+          )
+            .tag(thread.id)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(
+              top: PaneMetrics.listRowVertical,
+              leading: PaneMetrics.listRowLeading,
+              bottom: PaneMetrics.listRowVertical,
+              trailing: PaneMetrics.listRowTrailing
+            ))
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
               Button(role: .destructive) {
                 store.delete(thread)
@@ -128,35 +187,51 @@ struct ThreadsListView: View {
 
 private struct ThreadRowSummary: View {
   let thread: Thread
+  var isSelected: Bool = false
   let action: () -> Void
+  /// Closure-style rename so the row can present a `RenameThreadSheet`
+  /// without reaching for AppStore.
+  let onRename: (String) -> Void
+
+  @Environment(AppStore.self) private var store
+  @State private var renaming: Bool = false
 
   var body: some View {
     Button(action: action) {
-      HStack(spacing: 12) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(thread.title)
-            .font(.system(size: 14, weight: .medium))
-            .lineLimit(1)
-          Text(secondaryLine)
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
-        Spacer(minLength: 8)
-        // Only surface non-default kinds — "Normal" is the implicit
-        // baseline; rendering it on every row was visual noise.
-        if thread.kind != .normal {
-          Text(thread.kind.rawValue.capitalized)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.tertiary)
-            .monospaced()
-        }
-      }
-      .padding(.vertical, 4)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .contentShape(Rectangle())
+      // Thread rows aren't task-shaped (no deadline, no thread tag — they
+      // ARE the thread). Reuse `TaskRow` for the same metrics + anatomy
+      // so the eye sees the same row density across panes, but feed it
+      // only the title + breadcrumb.
+      TaskRow(
+        title: thread.title,
+        subtitle: secondaryLine,
+        isSelected: isSelected
+      )
     }
     .buttonStyle(.plain)
+    .contextMenu {
+      Button("Open") { action() }
+      Button("Rename…") { renaming = true }
+      Divider()
+      Button("Mark Active") { store.setStatus(thread, to: .active) }
+        .disabled(thread.status == .active)
+      Button("Park") { store.setStatus(thread, to: .parked) }
+        .disabled(thread.status == .parked)
+      Button("Mark Done") { store.setStatus(thread, to: .done) }
+        .disabled(thread.status == .done)
+      Divider()
+      Button("Delete", role: .destructive) { store.delete(thread) }
+    }
+    .sheet(isPresented: $renaming) {
+      RenameThreadSheet(
+        currentTitle: thread.title,
+        onSave: { newTitle in
+          onRename(newTitle)
+          renaming = false
+        },
+        onCancel: { renaming = false }
+      )
+    }
   }
 
   private var secondaryLine: String {
